@@ -1,0 +1,28 @@
+[package]
+name = "app-prover"
+version = "0.1.0"
+authors = [ "Automata Authors" ]
+edition = "2021"
+
+[features]
+default = ["std"]
+
+std = ["glog/std", "app/std", "base/std", "jsonrpc/std", "serde/std", "serde_json/std", "eth_tools/std", "statedb/std", "mpt/std", "executor/std", "linea/std"]
+tstd = ["sgxlib/tstd", "glog/tstd", "app/tstd", "base/tstd", "jsonrpc/tstd", "serde/tstd", "serde_json/tstd", "eth_tools/tstd", "statedb/tstd", "mpt/tstd", "executor/tstd", "linea/tstd"]
+sgx = []
+#sgx = ["sgxlib-ra", "sgxlib-ra/sgx", "prover/sgx", "verifier/sgx", "sgxlib-ra/dcap"]
+
+[dependencies]
+app = { git = "https://github.com/automata-network/app-rs", default-features = false }
+sgxlib = { git = "https://github.com/automata-network/sgxlib", default-features = false }
+glog = { git = "https://github.com/automata-network/glog-rs", default-features = false }
+base = { git = "https://github.com/automata-network/base-rs", default-features = false }
+jsonrpc = { git = "https://github.com/automata-network/jsonrpc-rs", default-features = false }
+eth_tools = { path = "../../common/eth_tools", default-features = false }
+statedb = { path = "../../common/statedb", default-features = false }
+mpt = { path = "../../common/mpt", default-features = false }
+executor = { path = "../../common/executor", default-features = false }
+linea = { path = "../../common/linea", default-features = false }
+
+serde = { git = "https://github.com/automata-network/sgxlib-thirdparty", default-features = false }
+serde_json = { git = "https://github.com/automata-network/sgxlib-thirdparty", default-features = false }

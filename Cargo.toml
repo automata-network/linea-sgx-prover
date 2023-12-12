@@ -1,0 +1,11 @@
+[workspace]
+members = [
+    "bin/std/prover",
+
+    "src/apps/prover",
+    "src/common/eth_tools",
+    "src/common/statedb",
+    "src/common/mpt",
+    "src/common/executor",
+    "src/common/linea",
+]

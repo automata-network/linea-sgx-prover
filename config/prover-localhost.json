@@ -1,0 +1,8 @@
+{
+    "l2": "http://localhost:8545",
+    "server": {
+        "tls": "",
+        "body_limit": 2097152,
+        "workers": 10
+    }
+}

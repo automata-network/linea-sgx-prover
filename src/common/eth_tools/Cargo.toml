@@ -1,0 +1,25 @@
+[package]
+name = "eth_tools"
+version = "0.1.0"
+authors = ["Automata Team"]
+edition = "2021"
+license = "Apache-2.0"
+
+[features]
+default = ["std"]
+
+std = ["jsonrpc/std", "base/std", "net-http/std", "eth_types/std", "glog/std", "serde/std", "serde_json/std", "eth-tools/std", "crypto/std"]
+tstd = ["jsonrpc/tstd", "base/tstd", "net-http/tstd", "eth_types/tstd", "glog/tstd", "serde/std", "serde_json/std", "eth-tools/tstd", "crypto/tstd"]
+
+[dependencies]
+sgxlib = { git = "https://github.com/automata-network/sgxlib", default-features = false }
+eth-tools = { git = "https://github.com/automata-network/eth-tools-rs", default-features = false }
+jsonrpc = { git = "https://github.com/automata-network/jsonrpc-rs", default-features = false }
+base = { git = "https://github.com/automata-network/base-rs", default-features = false }
+net-http = { git = "https://github.com/automata-network/net-http-rs", default-features = false }
+eth_types = { git = "https://github.com/automata-network/eth-types-rs", default-features = false }
+glog = { git = "https://github.com/automata-network/glog-rs", default-features = false }
+crypto = { git = "https://github.com/automata-network/crypto-rs", default-features = false }
+
+serde = { git = "https://github.com/automata-network/sgxlib-thirdparty", default-features = false }
+serde_json = { git = "https://github.com/automata-network/sgxlib-thirdparty", default-features = false }
