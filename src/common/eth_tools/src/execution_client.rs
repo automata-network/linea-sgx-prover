@@ -1,6 +1,7 @@
 use std::prelude::v1::*;
 
 use crypto::keccak_hash;
+use eth_types::Signer;
 use eth_types::{
     BlockSelector, FetchState, FetchStateResult, HexBytes, TransactionAccessTuple, SH160, SH256,
     SU256,
@@ -74,6 +75,14 @@ impl<C: RpcClient> ExecutionClient<C> {
             }
         }
 
+        let blk = self.get_block(block)?;
+        for tx in &blk.transactions {
+            if let Some(from) = tx.from {
+                glog::info!("add from: {:?}", from);
+                unique.entry(from).or_insert_with(|| BTreeSet::new());
+            }
+        }
+
         let mut fetch_reqs = Vec::with_capacity(unique.len());
         for (key, acc) in unique {
             fetch_reqs.push(FetchState {
@@ -84,12 +93,12 @@ impl<C: RpcClient> ExecutionClient<C> {
                 code: None,
             });
         }
-        let states = self.fetch_states(&fetch_reqs, block, true)?;
-        let blk = self.get_block(block)?;
-        let blkno = blk.header.number.as_u64();
 
-        let prev_state_root = if blkno > 0 {
-            self.get_block_header((blkno - 1).into())?.state_root
+        let prev_block = (blk.header.number.as_u64() - 1).into();
+
+        let states = self.fetch_states(&fetch_reqs, prev_block, true)?;
+        let prev_state_root = if blk.header.number.as_u64() > 0 {
+            self.get_block_header(prev_block)?.state_root
         } else {
             SH256::default()
         };

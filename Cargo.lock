@@ -1146,6 +1146,7 @@ dependencies = [
  "crypto",
  "eth_tools",
  "eth_types",
+ "evm",
  "executor",
  "glog",
  "lazy_static",

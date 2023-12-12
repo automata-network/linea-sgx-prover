@@ -26,8 +26,9 @@ impl app::App for App {
         let l2 = self.l2.get(self);
         let chain_id = l2.chain_id().map_err(debug)?;
         let pob = l2.generate_pob(chain_id, 9.into()).unwrap();
+        glog::info!("pob: {:?}", pob);
         let mut db = Database::new(100000);
-        let be = BlockExecutor::new();
+        let be = BlockExecutor::new(chain_id.into());
         be.execute(&mut db, pob);
 
         // let srv = self.serve.get(self);

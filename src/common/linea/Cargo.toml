@@ -8,8 +8,8 @@ license = "Apache-2.0"
 [features]
 default = ["std"]
 
-std = ["base/std", "eth_types/std", "glog/std", "eth_tools/std", "crypto/std", "statedb/std", "mpt/std", "executor/std"]
-tstd = ["base/tstd", "eth_types/tstd", "glog/tstd", "eth_tools/tstd", "crypto/tstd", "statedb/tstd", "mpt/tstd", "executor/tstd"]
+std = ["base/std", "eth_types/std", "glog/std", "eth_tools/std", "crypto/std", "statedb/std", "mpt/std", "executor/std", "evm/std"]
+tstd = ["base/tstd", "eth_types/tstd", "glog/tstd", "eth_tools/tstd", "crypto/tstd", "statedb/tstd", "mpt/tstd", "executor/tstd", "evm/tstd"]
 
 [dependencies]
 sgxlib = { git = "https://github.com/automata-network/sgxlib", default-features = false }
@@ -21,6 +21,7 @@ crypto = { git = "https://github.com/automata-network/crypto-rs", default-featur
 statedb = { path = "../statedb", default-features = false }
 mpt = { path = "../mpt", default-features = false }
 executor = { path = "../executor", default-features = false }
+evm = { git = "https://github.com/automata-network/evm-rs", default-features = false }
 
 lazy_static = { version = "1.4.0", default-features = false, features = ["spin_no_std"] }
 rlp = { version = "0.5", default-features = false }

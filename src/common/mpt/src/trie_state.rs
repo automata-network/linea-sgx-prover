@@ -20,7 +20,6 @@ pub type StorageMap = TrieMap<SH256, StorageValue>;
 
 #[derive(Debug)]
 pub struct TrieState<F, D: NodeDB> {
-    parent: Arc<BlockHeader>,
     accounts: AccountMap,
     storages: BTreeMap<SH160, Box<StorageMap>>,
     db: D,
@@ -116,12 +115,11 @@ where
     F: StateFetcher,
     S: NodeDB<Node = TrieStorageNode> + Send + 'static,
 {
-    pub fn new(fetcher: F, parent: Arc<BlockHeader>, db: S) -> Self {
+    pub fn new(fetcher: F, state_root: SH256, db: S) -> Self {
         Self {
             fetcher,
-            accounts: AccountMap::new(parent.state_root.into()),
+            accounts: AccountMap::new(state_root.into()),
             storages: BTreeMap::new(),
-            parent,
             db,
         }
     }
@@ -355,7 +353,6 @@ where
 
     fn fork(&self) -> Self {
         Self {
-            parent: self.parent.clone(),
             fetcher: self.fetcher.clone(),
             accounts: AccountMap::new(self.state_root().into()),
             storages: BTreeMap::new(),
@@ -645,6 +642,7 @@ where
                     return Ok(out);
                 }
                 Err(missing_hash) => {
+                    glog::info!("missing_hash: {:?}", missing_hash);
                     if !fetched {
                         fetched = true;
                         let data = self.fetch_key(store, fetcher, origin_key).unwrap();
