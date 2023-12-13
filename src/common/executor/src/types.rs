@@ -36,9 +36,10 @@ pub struct Context<'a> {
     pub precompile: &'a PrecompileSet,
     pub tx: &'a PoolTx,
     pub header: &'a BlockHeader,
-    pub cost_gas_fee: bool,
+    pub no_gas_fee: bool,
     pub extra_fee: Option<SU256>,
     pub gas_overcommit: bool,
+    pub miner: Option<SH160>,
 }
 
 #[derive(Debug, Default)]

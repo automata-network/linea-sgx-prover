@@ -75,13 +75,9 @@ impl<C: RpcClient> ExecutionClient<C> {
             }
         }
 
-        let blk = self.get_block(block)?;
-        for tx in &blk.transactions {
-            if let Some(from) = tx.from {
-                glog::info!("add from: {:?}", from);
-                unique.entry(from).or_insert_with(|| BTreeSet::new());
-            }
-        }
+        let mut blk = self.get_block(block)?;
+        // blk.header.miner = "0x8F81e2E3F8b46467523463835F965fFE476E1c9E".into();
+        // unique.entry(blk.header.miner.clone()).or_default();
 
         let mut fetch_reqs = Vec::with_capacity(unique.len());
         for (key, acc) in unique {

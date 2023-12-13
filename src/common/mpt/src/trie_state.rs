@@ -1,6 +1,6 @@
 use std::prelude::v1::*;
 
-use crate::{add_nodes, Trie, TrieNode, TrieUpdateResult, TrieStorageNode};
+use crate::{add_nodes, Trie, TrieNode, TrieStorageNode, TrieUpdateResult};
 use base::trace::AvgCounterResult;
 use crypto::keccak_hash;
 use eth_types::{
@@ -242,8 +242,8 @@ where
     }
 
     fn sub_balance(&mut self, address: &SH160, val: &SU256) -> Result<(), Error> {
-        glog::debug!(target: "state_change", "account[{:?}]: sub balance: {:?}", address, val);
         self.with_acc(address, |ctx| {
+            glog::debug!(target: "state_change", "account[{:?}]: sub balance: {} - {} -> {:?}", address, ctx.val.balance, val, ctx.val.balance-val);
             ctx.val.set_balance(ctx.dirty, ctx.val.balance - val)
         })
     }

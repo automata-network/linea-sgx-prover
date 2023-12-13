@@ -1,22 +1,24 @@
 use std::prelude::v1::*;
 
-use crate::Database;
+use crate::{Database, Linea};
 use base::format::parse_ether;
 use eth_tools::Pob;
-use eth_types::{BlockHeader, PoolTx, Signer, Transaction, TransactionInner, SU256};
+use eth_types::{BlockHeader, PoolTx, Signer, Transaction, TransactionInner, SU256, Bloom, BlockNonce, Nilable, SH256, SH160};
 use executor::{Context, ExecuteError, PrecompileSet};
 use mpt::TrieState;
+use rlp_derive::RlpEncodable;
 use statedb::{NodeDB, StateDB};
 use std::sync::Arc;
 
 pub struct BlockExecutor {
     signer: Signer,
+    engine: Linea,
 }
 
 impl BlockExecutor {
     pub fn new(chain_id: SU256) -> Self {
         let signer = Signer::new(chain_id);
-        Self { signer }
+        Self { signer, engine: Linea {  } }
     }
 
     pub fn execute(&self, db: &Database, pob: Pob) -> Result<(), String> {
@@ -41,6 +43,14 @@ impl BlockExecutor {
         let txs = self.preprocess_txs(pob.block.transactions)?;
         let cfg = evm::Config::berlin();
         let precompile_set = PrecompileSet::berlin();
+        let miner = pob.block.header.miner;
+        let miner = self.engine.author(&pob.block.header);
+        // let extra_data = pob.block.header.extra_data.as_bytes();
+        // let mut sig =  [0_u8;65];
+        // sig.copy_from_slice(&extra_data[extra_data.len()-65..]);
+        // let sig = crypto::Secp256k1RecoverableSignature::new(sig);
+        // crypto::secp256k1_recover_pubkey(&sig, msg)
+        // glog::info!("extra_data: {:?}", pob.block.header.extra_data);
 
         for (tx_idx, tx) in txs.into_iter().enumerate() {
             let caller = tx.sender(&self.signer);
@@ -53,8 +63,9 @@ impl BlockExecutor {
                 tx: &tx,
                 header: &parent,
                 extra_fee: None,
-                cost_gas_fee: true,
+                no_gas_fee: false,
                 gas_overcommit: false,
+                miner: Some(miner),
             };
             let result = executor::TxExecutor::new(ctx, &mut state).execute();
             glog::info!("result{:?}", result);

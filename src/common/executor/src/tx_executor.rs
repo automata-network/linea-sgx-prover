@@ -50,6 +50,13 @@ impl<'a, D: StateDB> TxExecutor<'a, D> {
         let txfee = self.calculate_txfee(result.used_gas, &base_fee);
         self.apply_states(&result);
 
+        if let Some(miner) = &self.ctx.miner {
+            self.state_db
+                .add_balance(miner, &txfee)
+                .map_err(ExecuteError::StateError)?;
+        }
+        self.refund_gas()?;
+
         Ok(result)
     }
 
@@ -58,7 +65,6 @@ impl<'a, D: StateDB> TxExecutor<'a, D> {
         let gas_tip_cap = tx.max_priority_fee_per_gas();
         let gas_fee_cap = tx.max_fee_per_gas();
         let effective_tip = (*gas_tip_cap).min(*gas_fee_cap - base_fee);
-        let miner = &self.ctx.header.miner;
         let extra_fee = self.ctx.extra_fee.unwrap_or(SU256::zero());
 
         SU256::from(gas) * &effective_tip + extra_fee
@@ -107,7 +113,7 @@ impl<'a, D: StateDB> TxExecutor<'a, D> {
             states: Vec::new(),
         };
 
-        if !self.ctx.cost_gas_fee {
+        if self.ctx.no_gas_fee {
             // executor.used_gas() will minus the refunded_gas but we don't need this feature when cost_gas_fee is disabled.
             use evm::executor::stack::StackState;
             let refund_gas = executor.state().metadata().gasometer().refunded_gas();
@@ -232,7 +238,7 @@ impl<'a, D: StateDB> TxExecutor<'a, D> {
         self.gas += tx.gas().as_u64();
 
         self.initial_gas += tx.gas().as_u64();
-        if self.ctx.cost_gas_fee {
+        if !self.ctx.no_gas_fee {
             self.state_db
                 .sub_balance(caller, &(extra_fee + mgval))
                 .map_err(ExecuteError::StateError)?;
@@ -241,7 +247,7 @@ impl<'a, D: StateDB> TxExecutor<'a, D> {
     }
 
     fn refund_gas(&mut self) -> Result<(), ExecuteError> {
-        if self.ctx.cost_gas_fee {
+        if !self.ctx.no_gas_fee {
             let remaining = SU256::from(self.gas) * self.gas_price;
             self.state_db
                 .add_balance(self.ctx.caller, &remaining)
@@ -286,7 +292,7 @@ impl<'a, D: StateDB> TxExecutor<'a, D> {
                                 .map_err(ExecuteError::StateError)?;
                         }
                     } else {
-                        if &address == self.ctx.caller {
+                        if self.ctx.caller == &address {
                             self.state_db
                                 .set_nonce(&address, basic.nonce.into())
                                 .map_err(ExecuteError::StateError)?;
