@@ -68,7 +68,7 @@ impl BlockExecutor {
                 miner: Some(miner),
             };
             let result = executor::TxExecutor::new(ctx, &mut state).execute();
-            glog::info!("result{:?}", result);
+            glog::info!("Txn execute result: {:?}", result);
         }
         let root = state.flush();
 
