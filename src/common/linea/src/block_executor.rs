@@ -41,7 +41,8 @@ impl BlockExecutor {
         let parent = Arc::new(pob.block.header.clone());
         let mut state = TrieState::new((), pob.data.prev_state_root, db);
         let txs = self.preprocess_txs(pob.block.transactions)?;
-        let cfg = evm::Config::shanghai();
+        let mut cfg = evm::Config::shanghai();
+        cfg.max_initcode_size = None;
         let precompile_set = PrecompileSet::berlin();
         let miner = pob.block.header.miner;
         let miner = self.engine.author(&pob.block.header);
