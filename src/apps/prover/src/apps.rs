@@ -22,15 +22,21 @@ pub struct App {
 
 impl app::App for App {
     fn run(&self, env: app::AppEnv) -> Result<(), String> {
-        self.args.set(Args::from_args(env.args));
-        let l2 = self.l2.get(self);
-        let chain_id = l2.chain_id().map_err(debug)?;
-        let pob = l2.generate_pob(chain_id, 11119.into()).unwrap();
-        glog::info!("pob: {:?}", pob);
-        let mut db = Database::new(100000);
-        let be = BlockExecutor::new(chain_id.into());
-        be.execute(&mut db, pob);
+        // Iterate blocks to execute transactions
+        // for block_number in 19474..25436 {
+        for block_number in [17830, 17866, 17988, 17990, 18884, 18885, 18887, 19328, 19474] {
+            let env_args = env.args.clone();
+            self.args.set(Args::from_args(env_args));
+            let l2 = self.l2.get(self);
+            let chain_id = l2.chain_id().map_err(debug)?;
+            let pob = l2.generate_pob(chain_id, block_number.into()).unwrap();
+            glog::debug!("pob: {:?}", pob);
+            let mut db = Database::new(100000);
+            let be = BlockExecutor::new(chain_id.into());
+            be.execute(&mut db, pob, l2.clone());
+        }
 
+        glog::info!("All blocks executed successfully!");
         // let srv = self.serve.get(self);
         // let mut srv = srv.lock().unwrap();
         // srv.run();

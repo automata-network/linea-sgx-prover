@@ -2,10 +2,10 @@ use std::prelude::v1::*;
 
 use crate::{Database, Linea};
 use base::format::parse_ether;
-use eth_tools::Pob;
+use eth_tools::{Pob, ExecutionClient};
 use eth_types::{BlockHeader, PoolTx, Signer, Transaction, TransactionInner, SU256, Bloom, BlockNonce, Nilable, SH256, SH160};
 use executor::{Context, ExecuteError, PrecompileSet};
-use mpt::TrieState;
+use mpt::{TrieState, NoStateFetcher, RemoteFetcher};
 use rlp_derive::RlpEncodable;
 use statedb::{NodeDB, StateDB};
 use std::sync::Arc;
@@ -21,7 +21,7 @@ impl BlockExecutor {
         Self { signer, engine: Linea {  } }
     }
 
-    pub fn execute(&self, db: &Database, pob: Pob) -> Result<(), String> {
+    pub fn execute(&self, db: &Database, pob: Pob, client: Arc<ExecutionClient>) -> Result<(), String> {
         if pob.data.chain_id != self.signer.chain_id.as_u64() {
             return Err(format!(
                 "chain_id mismatch {}!={}",
@@ -38,8 +38,12 @@ impl BlockExecutor {
         }
         db.commit();
 
+        let pob_root = pob.block.header.state_root.clone();
+        let pob_block_number = pob.block.header.number.as_u64();
+
         let parent = Arc::new(pob.block.header.clone());
-        let mut state = TrieState::new((), pob.data.prev_state_root, db);
+        let remote_fetcher = RemoteFetcher::new(client);
+        let mut state = TrieState::new(remote_fetcher, pob.data.prev_state_root, db);
         let txs = self.preprocess_txs(pob.block.transactions)?;
         let mut cfg = evm::Config::shanghai();
         cfg.max_initcode_size = None;
@@ -69,12 +73,19 @@ impl BlockExecutor {
                 miner: Some(miner),
             };
             let result = executor::TxExecutor::new(ctx, &mut state).execute();
-            glog::info!("Txn execute result: {:?}", result);
+            glog::debug!("Txn execute result: {:?}", result);
         }
         let root = state.flush();
 
         let root = state.account_trie().hash();
-        glog::info!("root: {:?}", root);
+        if (root != &pob_root) {
+            glog::error!("Block#{:?}, root mismatch: {:?} != {:?}", pob_block_number, root, pob_root);
+            panic!("DIE, block#{:?} mismatch", pob_block_number);
+        } else {
+            // if (pob_block_number % 10 == 0) {
+                glog::info!("Block#{:?}, root match: {:?}", pob_block_number, root);
+            // }
+        }
         Ok(())
     }
 

@@ -3,6 +3,8 @@ use std::prelude::v1::*;
 use crate::{add_nodes, Trie, TrieNode, TrieStorageNode, TrieUpdateResult};
 use base::trace::AvgCounterResult;
 use crypto::keccak_hash;
+use eth_tools::ExecutionClient;
+use jsonrpc::RpcClient;
 use eth_types::{
     BlockHeader, FetchState, FetchStateResult, HexBytes, StateAccount, SH160, SH256, SU256,
 };
@@ -26,6 +28,95 @@ pub struct TrieState<F, D: NodeDB> {
     fetcher: F,
 }
 
+#[derive(Debug, Clone)]
+pub struct RemoteFetcher {
+    client: Arc<ExecutionClient>,
+}
+
+impl RemoteFetcher {
+    pub fn new(client: Arc<ExecutionClient>) -> Self {
+        Self {
+            client: client,
+        }
+    }
+}
+
+impl ProofFetcher for RemoteFetcher {
+    fn fetch_proofs(&self, key: &[u8]) -> Result<Vec<HexBytes>, String> {
+        Err(format!("key not found for proofs: {:?}", key))
+    }
+
+    fn get_nodes(&self, node: &[SH256]) -> Result<Vec<HexBytes>, String> {
+        glog::debug!("[RemoteFetcher] get_nodes");
+        // call debug_dbGet
+        let cli = self.client.raw();
+        let params_list = node.iter().map(|item| [item]).collect::<Vec<_>>();
+        match cli.batch_rpc("debug_dbGet", &params_list) {
+            Ok(r) => {
+                glog::debug!("debug_dbGet response: {:?}", r);
+                return Ok(r)
+            },
+            Err(e) => {
+                glog::error!("[RemoteFetcher] get_nodes error: {:?}", e);
+                return Err(format!("nodes not found: {:?}", node));
+            }
+        }
+    }
+}
+
+// impl<C: RpcClient + std::fmt::Debug + std::clone::Clone + 'static + std::marker::Send + std::marker::Sync> StateFetcher for RemoteFetcher<C> {
+impl StateFetcher for RemoteFetcher {
+    fn fork(&self) -> Self {
+        Self {
+            client: self.client.clone(),
+        }
+    }
+
+    fn get_account(&self, address: &SH160) -> Result<(SU256, u64, HexBytes), Error> {
+        Err(Error::WithKey(format!("account[{:?}] not found", address)))
+    }
+
+    fn get_block_hash(&self, number: u64) -> Result<SH256, Error> {
+        Err(Error::WithKey(format!(
+            "block_hash[{:?}] not found",
+            number
+        )))
+    }
+
+    fn get_code(&self, address: &SH160) -> Result<HexBytes, Error> {
+        Err(Error::WithKey(format!(
+            "account code[{:?}] not found",
+            address
+        )))
+    }
+
+    fn get_miss_usage(&self) -> AvgCounterResult {
+        AvgCounterResult::default()
+    }
+
+    fn get_storage(&self, address: &SH160, key: &SH256) -> Result<SH256, Error> {
+        Err(Error::WithKey(format!(
+            "account storage[{:?} {:?}] not found",
+            address, key
+        )))
+    }
+
+    fn prefetch_states(
+        &self,
+        list: &[FetchState],
+        with_proof: bool,
+    ) -> Result<Vec<FetchStateResult>, Error> {
+        unimplemented!()
+    }
+
+    fn with_acc(&self, address: &SH160) -> Self {
+        // Why do we need the `address` param?
+        Self {
+            client: self.client.clone(),
+        }
+    }
+}
+
 pub type NoStateFetcher = ();
 
 impl ProofFetcher for NoStateFetcher {
@@ -34,6 +125,7 @@ impl ProofFetcher for NoStateFetcher {
     }
 
     fn get_nodes(&self, node: &[SH256]) -> Result<Vec<HexBytes>, String> {
+        glog::debug!("get_nodes");
         Err(format!("nodes not found: {:?}", node))
     }
 }
@@ -150,6 +242,10 @@ where
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(n) => n.insert(Box::new(TrieMap::new(root.into()))),
         };
+        // glog::debug!("[Trie State] root: {:?}, root_hash: {:?}", root, storage.root_hash());
+        // if (address.eq(&"0x964ff70695da981027c81020b1c58d833d49a640".into())) {
+            glog::debug!("[Trie State#1] root: {:?}, root_hash: {:?}", root, storage.root_hash());
+        // }
         if storage.root_hash() != &root {
             storage.revert(root);
         }
@@ -179,6 +275,7 @@ where
         let mut account_dirty = 0;
         for (addr, item) in &mut self.accounts.cache {
             let mut dirty = self.accounts.dirty.contains_key(addr);
+            glog::debug!(target: "flush_state", "[Trie state] account[{:?}], dirty: {:?}", addr, dirty);
             // we already set the account dirty when the storage dirty
             if let Some(storage) = self.storages.get_mut(addr) {
                 // don't try to assert the root matches because the state will changed if it has reduction nodes.
@@ -186,12 +283,15 @@ where
                 storage_dirty += storage.dirty.len();
                 let nodes = storage.flush(&mut self.db);
                 if nodes.len() > 0 {
+                    glog::debug!(target: "flush_state", "[Update Root] account[{:?}] skipped, node length: {:?}", addr, nodes.len());
                     reduction_nodes.extend(nodes);
                     continue;
                 }
+                glog::debug!(target: "flush_state", "[Update Root] account[{:?}], dirty: {:?}, old root: {:?}, new root: {:?}, node length: {:?}", addr, dirty, item.root, storage.root_hash(), nodes.len());                
                 item.update_root(&mut dirty, storage.root_hash().clone().into());
             } else {
                 // if we can't get the storage map, means we got no storage updates.
+                glog::debug!(target: "flush_state", "[Update Root] account[{:?}] has no storage map", addr);
             }
             if dirty {
                 self.accounts.dirty.insert(addr.clone(), ());
@@ -201,16 +301,16 @@ where
         account_dirty += self.accounts.dirty.len();
         let nodes = self.accounts.flush(&mut self.db);
         reduction_nodes.extend(nodes);
-        glog::info!(
-            exclude:"dry_run",
-            "flush storages({}): {:?}, flush acc({}): {:?}, total: {:?}, reduction: {}",
-            storage_dirty,
-            start_flush_acc - start,
-            account_dirty,
-            start_flush_acc.elapsed(),
-            start.elapsed(),
-            reduction_nodes.len(),
-        );
+        // glog::info!(
+        //     exclude:"dry_run",
+        //     "flush storages({}): {:?}, flush acc({}): {:?}, total: {:?}, reduction: {}",
+        //     storage_dirty,
+        //     start_flush_acc - start,
+        //     account_dirty,
+        //     start_flush_acc.elapsed(),
+        //     start.elapsed(),
+        //     reduction_nodes.len(),
+        // );
         reduction_nodes.into_iter().map(|n| n.into()).collect()
     }
 }
@@ -314,7 +414,9 @@ where
 
     fn flush(&mut self) -> Result<SH256, Error> {
         let mut reduction_nodes = self.try_flush();
+        glog::debug!("Reduction nodes length: {:?}", reduction_nodes.len());
         if reduction_nodes.len() > 0 {
+            glog::debug!("Getting nodes");
             let nodes = self
                 .fetcher
                 .get_nodes(&reduction_nodes)
@@ -322,6 +424,7 @@ where
             let nodes = TrieNode::from_proofs(&self.db, &nodes).unwrap();
             add_nodes(&mut self.db, nodes);
             reduction_nodes = self.try_flush();
+            glog::debug!("Reduction nodes length: {:?}", reduction_nodes.len());
             assert_eq!(reduction_nodes.len(), 0);
         }
 

@@ -14,7 +14,7 @@ impl Linea {
         let pub_key_array = crypto::secp256k1_ecdsa_recover(&sig_array, &msg).unwrap();
         let pub_key = crypto::Secp256k1PublicKey::from_raw_bytes(&pub_key_array);
         let author = pub_key.eth_accountid().into();
-        glog::info!("author: {:?}", author);
+        glog::debug!("author: {:?}", author);
         return author;
     }
 

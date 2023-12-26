@@ -9,3 +9,6 @@ members = [
     "src/common/executor",
     "src/common/linea",
 ]
+
+# [patch.'https://github.com/automata-network/evm-rs']
+# evm = { path = "/Users/liaoyi/work/projects/evm-rs" }

@@ -262,6 +262,10 @@ where
                 n.insert(Box::new(TrieCache::new(new_trie)))
             }
         };
+        // glog::debug!("[Trie State] root: {:?}, root_hash: {:?}", root, storage.root_hash());
+        // if (address.eq(&"0x964ff70695da981027c81020b1c58d833d49a640".into())) {
+        //     glog::debug!("[Trie State#1] root: {:?}, root_hash: {:?}", root, storage.root_hash());
+        // }
         if storage.root_hash() != root {
             storage.revert(root);
         }
