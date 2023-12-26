@@ -1218,9 +1218,10 @@ version = "0.1.0"
 dependencies = [
  "base",
  "crypto",
- "eth-tools",
+ "eth_tools",
  "eth_types",
  "glog",
+ "jsonrpc",
  "lazy_static",
  "rlp",
  "rlp-derive",

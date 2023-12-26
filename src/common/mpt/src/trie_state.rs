@@ -7,6 +7,8 @@ use eth_types::{
     BlockHeader, FetchState, FetchStateResult, HexBytes, StateAccount, SH160, SH256, SU256,
 };
 use statedb::{Error, NodeDB, StateDB, TrieStateAccount};
+use eth_tools::ExecutionClient;
+use jsonrpc::RpcClient;
 
 use std::borrow::Cow;
 use std::collections::btree_map::Entry;
@@ -24,6 +26,94 @@ pub struct TrieState<F, D: NodeDB> {
     storages: BTreeMap<SH160, Box<StorageMap>>,
     db: D,
     fetcher: F,
+}
+
+#[derive(Debug, Clone)]
+pub struct RemoteFetcher {
+    client: Arc<ExecutionClient>,
+}
+
+impl RemoteFetcher {
+    pub fn new(client: Arc<ExecutionClient>) -> Self {
+        Self {
+            client: client,
+        }
+    }
+}
+
+impl ProofFetcher for RemoteFetcher {
+    fn fetch_proofs(&self, key: &[u8]) -> Result<Vec<HexBytes>, String> {
+        Err(format!("key not found for proofs: {:?}", key))
+    }
+
+    fn get_nodes(&self, node: &[SH256]) -> Result<Vec<HexBytes>, String> {
+        glog::debug!("[RemoteFetcher] get_nodes");
+        // call debug_dbGet
+        let cli = self.client.raw();
+        let params_list = node.iter().map(|item| [item]).collect::<Vec<_>>();
+        match cli.batch_rpc("debug_dbGet", &params_list) {
+            Ok(r) => {
+                glog::debug!("debug_dbGet response: {:?}", r);
+                return Ok(r)
+            },
+            Err(e) => {
+                glog::error!("[RemoteFetcher] get_nodes error: {:?}", e);
+                return Err(format!("nodes not found: {:?}", node));
+            }
+        }
+    }
+}
+
+impl StateFetcher for RemoteFetcher {
+    fn fork(&self) -> Self {
+        Self {
+            client: self.client.clone(),
+        }
+    }
+
+    fn get_account(&self, address: &SH160) -> Result<(SU256, u64, HexBytes), Error> {
+        Err(Error::WithKey(format!("account[{:?}] not found", address)))
+    }
+
+    fn get_block_hash(&self, number: u64) -> Result<SH256, Error> {
+        Err(Error::WithKey(format!(
+            "block_hash[{:?}] not found",
+            number
+        )))
+    }
+
+    fn get_code(&self, address: &SH160) -> Result<HexBytes, Error> {
+        Err(Error::WithKey(format!(
+            "account code[{:?}] not found",
+            address
+        )))
+    }
+
+    fn get_miss_usage(&self) -> AvgCounterResult {
+        AvgCounterResult::default()
+    }
+
+    fn get_storage(&self, address: &SH160, key: &SH256) -> Result<SH256, Error> {
+        Err(Error::WithKey(format!(
+            "account storage[{:?} {:?}] not found",
+            address, key
+        )))
+    }
+
+    fn prefetch_states(
+        &self,
+        list: &[FetchState],
+        with_proof: bool,
+    ) -> Result<Vec<FetchStateResult>, Error> {
+        unimplemented!()
+    }
+
+    fn with_acc(&self, address: &SH160) -> Self {
+        // Why do we need the `address` param?
+        Self {
+            client: self.client.clone(),
+        }
+    }
 }
 
 pub type NoStateFetcher = ();
