@@ -62,7 +62,7 @@ dependencies = [
  "app",
  "base",
  "eth_tools",
- "executor",
+ "evm-executor",
  "glog",
  "jsonrpc",
  "linea",
@@ -144,7 +144,6 @@ checksum = "d468802bab17cbc0cc575e9b053f41e72aa36bfa6b7f55e3529ffa43161b97fa"
 [[package]]
 name = "base"
 version = "0.1.0"
-source = "git+https://github.com/automata-network/base-rs#b749bad9643b72ce7279a8c096f9d8af80519d76"
 dependencies = [
  "chrono",
  "eth_types",
@@ -576,7 +575,6 @@ checksum = "e48c92028aaa870e83d51c64e5d4e0b6981b360c522198c23959f219a4e1b15b"
 [[package]]
 name = "eth-tools"
 version = "0.1.0"
-source = "git+https://github.com/automata-network/eth-tools-rs#55749c9e39fb2549c966cb48a6a497879c7dc9d8"
 dependencies = [
  "base",
  "eth_types",
@@ -607,7 +605,6 @@ dependencies = [
 [[package]]
 name = "eth_types"
 version = "0.1.0"
-source = "git+https://github.com/automata-network/eth-types-rs#f2ed5102f9aee57820b7edca764f875a6ac3187f"
 dependencies = [
  "byteorder",
  "crypto",
@@ -704,6 +701,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "evm-executor"
+version = "0.1.0"
+dependencies = [
+ "base",
+ "crypto",
+ "eth_types",
+ "evm",
+ "glog",
+ "lazy_static",
+ "num-bigint 0.1.0",
+ "ripemd160",
+ "rlp",
+ "rlp-derive",
+ "sgxlib",
+ "statedb",
+ "substrate-bn",
+]
+
+[[package]]
 name = "evm-gasometer"
 version = "0.37.0"
 source = "git+https://github.com/automata-network/evm-rs#c3bee6f18be73c8e6654a1c2afd3b0b218742470"
@@ -724,27 +740,6 @@ dependencies = [
  "evm-core",
  "primitive-types 0.9.1",
  "sha3 0.10.8",
-]
-
-[[package]]
-name = "executor"
-version = "0.1.0"
-dependencies = [
- "base",
- "crypto",
- "eth_tools",
- "eth_types",
- "evm",
- "glog",
- "lazy_static",
- "mpt",
- "num-bigint 0.1.0",
- "ripemd160",
- "rlp",
- "rlp-derive",
- "sgxlib",
- "statedb",
- "substrate-bn",
 ]
 
 [[package]]
@@ -1147,7 +1142,7 @@ dependencies = [
  "eth_tools",
  "eth_types",
  "evm",
- "executor",
+ "evm-executor",
  "glog",
  "lazy_static",
  "mpt",

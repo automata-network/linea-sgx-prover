@@ -1,11 +1,16 @@
 use std::prelude::v1::*;
 
 use app::{Const, Getter, Var, VarMutex};
-use base::{format::debug, fs::read_file, trace::Alive};
+use base::{
+    format::debug,
+    fs::read_file,
+    trace::{Alive, AliveIter},
+};
 use eth_tools::ExecutionClient;
+use evm_executor::{BlockBuilder, ConsensusBlockInfo, Engine, Ethereum};
 use jsonrpc::{JsonrpcErrorObj, MixRpcClient, RpcArgs, RpcServer, RpcServerConfig};
-use linea::{BlockExecutor, Database};
-use mpt::Trie;
+use linea::{BlockExecutor, Linea};
+use mpt::{Database, Trie};
 use statedb::{MemStore, NodeDB};
 use std::sync::Arc;
 
@@ -16,24 +21,26 @@ pub struct App {
     pub alive: Alive,
     pub args: Const<Args>,
     pub serve: VarMutex<RpcServer<Api>>,
-    pub l2: Var<ExecutionClient>,
+    pub l2: Var<ExecutionClient<Arc<MixRpcClient>>>,
     pub cfg: Var<Config>,
 }
+
+pub struct Fetcher {}
 
 impl app::App for App {
     fn run(&self, env: app::AppEnv) -> Result<(), String> {
         self.args.set(Args::from_args(env.args));
         let l2 = self.l2.get(self);
         let chain_id = l2.chain_id().map_err(debug)?;
-        let pob = l2.generate_pob(chain_id, 11119.into()).unwrap();
-        glog::info!("pob: {:?}", pob);
-        let mut db = Database::new(100000);
-        let be = BlockExecutor::new(chain_id.into());
-        be.execute(&mut db, pob);
 
-        // let srv = self.serve.get(self);
-        // let mut srv = srv.lock().unwrap();
-        // srv.run();
+        for i in self.alive.iter([2600106]) {
+            glog::info!("block: {}", i);
+
+            let be = BlockExecutor::new(chain_id.into());
+            let pob = be.generate_pob(l2.as_ref(), i.into()).unwrap();
+            let db = Database::new(100000);
+            be.execute(&db, pob).unwrap();
+        }
         Ok(())
     }
 
@@ -85,12 +92,12 @@ impl Getter<Config> for App {
     }
 }
 
-impl Getter<ExecutionClient> for App {
-    fn generate(&self) -> ExecutionClient {
+impl Getter<ExecutionClient<Arc<MixRpcClient>>> for App {
+    fn generate(&self) -> ExecutionClient<Arc<MixRpcClient>> {
         let mut client = MixRpcClient::new(None);
         client
             .add_endpoint(&self.alive, &[self.cfg.get(self).l2.clone()])
             .unwrap();
-        ExecutionClient::new(client)
+        ExecutionClient::new(Arc::new(client))
     }
 }

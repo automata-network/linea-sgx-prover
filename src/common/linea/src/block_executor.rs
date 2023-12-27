@@ -1,35 +1,59 @@
 use std::prelude::v1::*;
 
-use crate::{Database, Linea};
-use base::format::parse_ether;
-use eth_tools::Pob;
-use eth_types::{BlockHeader, PoolTx, Signer, Transaction, TransactionInner, SU256, Bloom, BlockNonce, Nilable, SH256, SH160};
-use executor::{Context, ExecuteError, PrecompileSet};
-use mpt::TrieState;
-use rlp_derive::RlpEncodable;
-use statedb::{NodeDB, StateDB};
+use crate::Linea;
+use base::format::{debug, parse_ether};
+use eth_tools::{ExecutionClient, MixRpcClient, Pob};
+use eth_types::{
+    BlockHeader, BlockSelector, Signer, Transaction, TransactionInner, TxTrait, SU256,
+};
+use evm_executor::{BlockBuilder, Engine, ExecuteError, PrecompileSet, TxContext};
+use mpt::{BlockStateFetcher, Database, ReductionNodeFetcher, TrieState};
+use statedb::NodeDB;
 use std::sync::Arc;
 
 pub struct BlockExecutor {
-    signer: Signer,
     engine: Linea,
 }
 
 impl BlockExecutor {
     pub fn new(chain_id: SU256) -> Self {
-        let signer = Signer::new(chain_id);
-        Self { signer, engine: Linea {  } }
+        Self {
+            engine: Linea::new(chain_id),
+        }
     }
 
-    pub fn execute(&self, db: &Database, pob: Pob) -> Result<(), String> {
-        if pob.data.chain_id != self.signer.chain_id.as_u64() {
-            return Err(format!(
-                "chain_id mismatch {}!={}",
-                pob.data.chain_id, self.signer.chain_id
-            ));
-        }
+    pub fn generate_pob(
+        &self,
+        client: &ExecutionClient<Arc<MixRpcClient>>,
+        block: BlockSelector,
+    ) -> Result<Pob, String> {
+        let chain_id = self.engine.signer().chain_id;
+        let mut pob = client
+            .generate_pob(chain_id.as_u64(), block)
+            .map_err(debug)?;
 
-        let mut db = db.fork();
+        let mut db = Database::new(100000);
+        self.resume_db(&mut pob, &mut db);
+
+        if true {
+            // fill reduction node
+            let header = pob.block.header.clone();
+            let mut fetcher = ReductionNodeFetcher::new(client);
+            let statedb = mpt::TrieState::new(fetcher.clone(), pob.data.prev_state_root, db);
+            let mut builder = BlockBuilder::new(self.engine.clone(), statedb, (), header).unwrap();
+            let txs = self.preprocess_txs(pob.block.transactions.clone())?;
+            for tx in txs {
+                builder.commit(Arc::new(tx)).map_err(debug)?;
+            }
+            builder.flush_state().map_err(debug)?;
+            for (_, node) in fetcher.take() {
+                pob.data.mpt_nodes.push(node);
+            }
+        }
+        Ok(pob)
+    }
+
+    fn resume_db(&self, pob: &Pob, db: &mut Database) {
         for node in &pob.data.mpt_nodes {
             db.resume_node(node);
         }
@@ -37,45 +61,47 @@ impl BlockExecutor {
             db.resume_code(&code);
         }
         db.commit();
+    }
 
-        let parent = Arc::new(pob.block.header.clone());
-        let mut state = TrieState::new((), pob.data.prev_state_root, db);
-        let txs = self.preprocess_txs(pob.block.transactions)?;
-        let mut cfg = evm::Config::shanghai();
-        cfg.max_initcode_size = None;
-        let precompile_set = PrecompileSet::berlin();
-        let miner = pob.block.header.miner;
-        let miner = self.engine.author(&pob.block.header);
-        // let extra_data = pob.block.header.extra_data.as_bytes();
-        // let mut sig =  [0_u8;65];
-        // sig.copy_from_slice(&extra_data[extra_data.len()-65..]);
-        // let sig = crypto::Secp256k1RecoverableSignature::new(sig);
-        // crypto::secp256k1_recover_pubkey(&sig, msg)
-        // glog::info!("extra_data: {:?}", pob.block.header.extra_data);
-
-        for (tx_idx, tx) in txs.into_iter().enumerate() {
-            let caller = tx.sender(&self.signer);
-            let tx = PoolTx::with_tx(&self.signer, tx);
-            let ctx = Context {
-                chain_id: &self.signer.chain_id,
-                caller: &caller,
-                cfg: &cfg,
-                precompile: &precompile_set,
-                tx: &tx,
-                header: &parent,
-                extra_fee: None,
-                no_gas_fee: false,
-                gas_overcommit: false,
-                miner: Some(miner),
-            };
-            let result = executor::TxExecutor::new(ctx, &mut state).execute();
-            glog::info!("Txn execute result: {:?}", result);
+    pub fn execute(&self, db: &Database, pob: Pob) -> Result<(), String> {
+        if pob.data.chain_id != self.engine.signer().chain_id.as_u64() {
+            return Err(format!(
+                "chain_id mismatch {}!={}",
+                pob.data.chain_id,
+                self.engine.signer().chain_id
+            ));
         }
-        let root = state.flush();
 
-        let root = state.account_trie().hash();
-        glog::info!("root: {:?}", root);
-        Ok(())
+        let mut db = db.fork();
+        self.resume_db(&pob, &mut db);
+
+        let expect_root = pob.block.header.state_root;
+        let number = pob.block.header.number.as_u64();
+        let mut header = pob.block.header;
+
+        let statedb = mpt::TrieState::new((), pob.data.prev_state_root, db);
+        let mut builder = BlockBuilder::new(self.engine.clone(), statedb, (), header.clone()).unwrap();
+        let txs = self.preprocess_txs(pob.block.transactions)?;
+        let total = txs.len();
+        for (idx, tx) in txs.into_iter().enumerate() {
+            glog::info!("[{}/{}]tx: {:?}", idx, total, tx.hash());
+            let result = builder.commit(Arc::new(tx)).unwrap();
+        }
+        if let Some(withdrawals) = pob.block.withdrawals {
+            builder.withdrawal(withdrawals).unwrap();
+        }
+        let block = builder.finalize().unwrap();
+        let new_state = block.header.state_root;
+        assert!(
+            new_state == expect_root,
+            "block: {}, want: {:?}, got: {:?}, begin: {:?}",
+            number,
+            expect_root,
+            new_state,
+            pob.data.prev_state_root,
+        );
+        glog::info!("root: {:?} vs {:?}", new_state, expect_root);
+        return Ok(());
     }
 
     fn preprocess_txs(&self, txs: Vec<Transaction>) -> Result<Vec<TransactionInner>, String> {
