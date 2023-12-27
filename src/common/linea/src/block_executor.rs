@@ -80,11 +80,11 @@ impl BlockExecutor {
         let root = state.account_trie().hash();
         if (root != &pob_root) {
             glog::error!("Block#{:?}, root mismatch: {:?} != {:?}", pob_block_number, root, pob_root);
-            panic!("DIE, block#{:?} mismatch", pob_block_number);
+            // panic!("DIE, block#{:?} mismatch", pob_block_number);
         } else {
-            // if (pob_block_number % 10 == 0) {
+            if (pob_block_number % 10 == 0) {
                 glog::info!("Block#{:?}, root match: {:?}", pob_block_number, root);
-            // }
+            }
         }
         Ok(())
     }

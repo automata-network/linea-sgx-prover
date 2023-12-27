@@ -24,7 +24,7 @@ impl app::App for App {
     fn run(&self, env: app::AppEnv) -> Result<(), String> {
         // Iterate blocks to execute transactions
         // for block_number in 19474..25436 {
-        for block_number in [17830, 17866, 17988, 17990, 18884, 18885, 18887, 19328, 19474] {
+        for block_number in 2600106..2600107 {
             let env_args = env.args.clone();
             self.args.set(Args::from_args(env_args));
             let l2 = self.l2.get(self);

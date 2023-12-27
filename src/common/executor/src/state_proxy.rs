@@ -42,7 +42,8 @@ impl<'a, D: StateDB> evm::backend::Backend for StateProxy<'a, D> {
 
     fn block_coinbase(&self) -> H160 {
         glog::debug!(target: "executor", "get coinbase: {:?}", self.ctx.header.miner);
-        self.ctx.header.miner.into()
+        self.ctx.miner.unwrap().into()
+        // self.ctx.header.miner.into()
     }
 
     fn block_difficulty(&self) -> U256 {

@@ -1,3 +1,4 @@
+use core::panic;
 use std::prelude::v1::*;
 
 use crate::{add_nodes, Trie, TrieNode, TrieStorageNode, TrieUpdateResult};
@@ -228,6 +229,11 @@ where
     where
         Fn: FnOnce(TrieMapCtx<'_, TrieStateAccount<StateAccount>, S, F>) -> O,
     {
+        glog::debug!("with_acc: {:?}", address);
+        
+        if (address.eq(&"0x0000000000000000000000000000000000000000".into())) {
+            panic!("I want to die");
+        }
         self.accounts
             .with_key(&mut self.db, &self.fetcher, address, f)
             .map_err(|err| Error::DecodeError(err))
@@ -250,6 +256,7 @@ where
             storage.revert(root);
         }
         let storage_fetcher = self.fetcher.with_acc(address);
+        glog::debug!("with_storage: {:?}, {:?}", address, index);
         let out = storage
             .with_key(&mut self.db, &storage_fetcher, index, f)
             .map_err(|err| Error::DecodeError(err))?;
@@ -728,6 +735,7 @@ where
         let mut fetched = false;
         loop {
             let result = self.trie.get(store, origin_key);
+            glog::debug!("Tring to get key: {:?}", origin_key);
             match result.get_data() {
                 Ok(data) => {
                     let data: V = if data.len() == 0 {
@@ -748,7 +756,8 @@ where
                     glog::info!("missing_hash: {:?}", missing_hash);
                     if !fetched {
                         fetched = true;
-                        let data = self.fetch_key(store, fetcher, origin_key).unwrap();
+                        let data: Vec<SH256> = self.fetch_key(store, fetcher, origin_key).unwrap();
+                        glog::debug!("Feched data: {:?}", data);
                         if !data.contains(&missing_hash) {
                             // println!("{}", self.root().format(store));
                             panic!(
@@ -782,14 +791,14 @@ where
         for node in &proof_nodes {
             store.add_node(node.embedded().expect("should be embedded node"));
         }
-        // if proof_nodes.len() == 0 {
-        //     glog::info!(
-        //         "got zero nodes: {:?}, proofs:{:?}, fetcher: {:?}",
-        //         HexBytes::from(origin_key),
-        //         proofs,
-        //         fetcher
-        //     );
-        // }
+        if proof_nodes.len() == 0 {
+            glog::info!(
+                "got zero nodes: {:?}, proofs:{:?}, fetcher: {:?}",
+                HexBytes::from(origin_key),
+                proofs,
+                fetcher
+            );
+        }
         // sanity check?
         Ok(proof_nodes.iter().map(|n| n.hash().clone()).collect())
     }
