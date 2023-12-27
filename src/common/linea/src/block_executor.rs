@@ -84,23 +84,32 @@ impl BlockExecutor {
         let txs = self.preprocess_txs(pob.block.transactions)?;
         let total = txs.len();
         for (idx, tx) in txs.into_iter().enumerate() {
-            glog::info!("[{}/{}]tx: {:?}", idx, total, tx.hash());
+            // glog::info!("[{}/{}]tx: {:?}", idx, total, tx.hash());
             let result = builder.commit(Arc::new(tx)).unwrap();
+            glog::debug!("Txn execute result: {:?}", result);
         }
         if let Some(withdrawals) = pob.block.withdrawals {
             builder.withdrawal(withdrawals).unwrap();
         }
         let block = builder.finalize().unwrap();
         let new_state = block.header.state_root;
-        assert!(
-            new_state == expect_root,
-            "block: {}, want: {:?}, got: {:?}, begin: {:?}",
-            number,
-            expect_root,
-            new_state,
-            pob.data.prev_state_root,
-        );
-        glog::info!("root: {:?} vs {:?}", new_state, expect_root);
+        if (new_state != expect_root) {
+            glog::error!("Block#{:?}, root mismatch: {:?} != {:?}", number, new_state, expect_root);
+            panic!("DIE, block#{:?} mismatch", number);
+        } else {
+            if (number % 10 == 0) {
+                glog::info!("Block#{:?}, root match: {:?}", number, new_state);
+            }
+        }
+        // assert!(
+        //     new_state == expect_root,
+        //     "block: {}, want: {:?}, got: {:?}, begin: {:?}",
+        //     number,
+        //     expect_root,
+        //     new_state,
+        //     pob.data.prev_state_root,
+        // );
+        // glog::info!("root: {:?} vs {:?}", new_state, expect_root);
         return Ok(());
     }
 

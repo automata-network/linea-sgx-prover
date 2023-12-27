@@ -99,8 +99,8 @@ impl evm_executor::Engine for Linea {
     }
 
     fn evm_config(&self) -> evm::Config {
-        let mut cfg = evm::Config::shanghai();
-        cfg.max_initcode_size = None;
+        let mut cfg = evm::Config::london();
+        // cfg.max_initcode_size = None;
         cfg
     }
 

@@ -6,3 +6,24 @@ members = [
     "src/common/eth_tools",
     "src/common/linea",
 ]
+
+# [patch.'https://github.com/automata-network/statedb-rs']
+# statedb = { path = "../statedb-rs" }
+ 
+[patch.'https://github.com/automata-network/evm-executor-rs']
+evm-executor = { path = "../evm-executor-rs" }
+
+[patch.'https://github.com/automata-network/evm-rs']
+evm = { path = "../evm-rs" }
+ 
+# [patch.'https://github.com/automata-network/eth-types-rs']
+# eth_types = { path = "../eth-types-rs" }
+ 
+# [patch.'https://github.com/automata-network/base-rs']
+# base = { path = "../base-rs" }
+ 
+[patch.'https://github.com/automata-network/mpt-rs']
+mpt = { path = "../mpt-rs" }
+ 
+# [patch.'https://github.com/automata-network/eth-tools-rs']
+# eth-tools = { path = "../eth-tools-rs" }

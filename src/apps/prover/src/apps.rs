@@ -33,14 +33,13 @@ impl app::App for App {
         let l2 = self.l2.get(self);
         let chain_id = l2.chain_id().map_err(debug)?;
 
-        for i in self.alive.iter([2600106]) {
-            glog::info!("block: {}", i);
-
+        for i in self.alive.iter(2600106..2600107) {
             let be = BlockExecutor::new(chain_id.into());
             let pob = be.generate_pob(l2.as_ref(), i.into()).unwrap();
             let db = Database::new(100000);
             be.execute(&db, pob).unwrap();
         }
+        glog::info!("All blocks executed successfully!");
         Ok(())
     }
 
