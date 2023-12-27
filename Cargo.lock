@@ -144,6 +144,7 @@ checksum = "d468802bab17cbc0cc575e9b053f41e72aa36bfa6b7f55e3529ffa43161b97fa"
 [[package]]
 name = "base"
 version = "0.1.0"
+source = "git+https://github.com/automata-network/base-rs#9e8edde61962de74c7a8aabafaee65c9fd268c7c"
 dependencies = [
  "chrono",
  "eth_types",
@@ -575,6 +576,7 @@ checksum = "e48c92028aaa870e83d51c64e5d4e0b6981b360c522198c23959f219a4e1b15b"
 [[package]]
 name = "eth-tools"
 version = "0.1.0"
+source = "git+https://github.com/automata-network/eth-tools-rs#3e8d6556c992c743f8cc8ca38dfd3e8d3f2de750"
 dependencies = [
  "base",
  "eth_types",
@@ -605,6 +607,7 @@ dependencies = [
 [[package]]
 name = "eth_types"
 version = "0.1.0"
+source = "git+https://github.com/automata-network/eth-types-rs#5f79b8109fcf18bfb89cd23fe81b58bb18637cf3"
 dependencies = [
  "byteorder",
  "crypto",
@@ -703,6 +706,7 @@ dependencies = [
 [[package]]
 name = "evm-executor"
 version = "0.1.0"
+source = "git+https://github.com/automata-network/evm-executor-rs#d65f61ddb19dca6be71199b3af5c80846e9e08f3"
 dependencies = [
  "base",
  "crypto",
@@ -1210,6 +1214,7 @@ dependencies = [
 [[package]]
 name = "mpt"
 version = "0.1.0"
+source = "git+https://github.com/automata-network/mpt-rs#e6efaa5722f5ac3cb2f50a3a9c5d6f9895a752fd"
 dependencies = [
  "base",
  "crypto",
@@ -2322,6 +2327,7 @@ checksum = "a8f112729512f8e442d81f95a8a7ddf2b7c6b8a1a6f509a95864142b30cab2d3"
 [[package]]
 name = "statedb"
 version = "0.1.0"
+source = "git+https://github.com/automata-network/statedb-rs?branch=v2#1558a6722866fe766f0eb4160ca6216eceb60e0d"
 dependencies = [
  "base",
  "crypto",
