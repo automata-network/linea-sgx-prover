@@ -133,7 +133,12 @@ impl evm_executor::Engine for Linea {
         Ok(Some(author))
     }
 
-    fn tx_context<'a>(&self, ctx: &mut TxContext<'a, Self::Transaction, Self::BlockHeader>) {}
+    fn tx_context<'a>(&self, ctx: &mut TxContext<'a, Self::Transaction, Self::BlockHeader>) {
+        //Set basefee
+        glog::debug!("Set base fee: {:?}", ctx.header.base_fee_per_gas);
+        ctx.block_base_fee = ctx.header.base_fee_per_gas;
+        ctx.difficulty = ctx.header.difficulty;
+    }
 
     fn finalize_block<D: StateDB>(
         &mut self,
