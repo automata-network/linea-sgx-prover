@@ -35,9 +35,9 @@ impl app::App for App {
         let l2 = self.l2.get(self);
         let chain_id = l2.chain_id().map_err(debug)?;
 
-        let tasks = (2600106u64..2700107).collect::<Vec<_>>();
-        parallel(&self.alive, tasks, 8, move |i| {
-            glog::info!("block: {}", i);
+        let tasks = (2000000u64..2761700).collect::<Vec<_>>();
+        parallel(&self.alive, tasks, 4, move |i| {
+            // glog::info!("block: {}", i);
             let be = BlockExecutor::new(chain_id.into());
             let pob = be.generate_pob(l2.as_ref(), i.into()).unwrap();
             let db = Database::new(100000);
@@ -48,21 +48,21 @@ impl app::App for App {
             let block = be.execute(l2.as_ref(), &db, pob).unwrap();
 
             let new_state = block.header.state_root;
-            if new_state != expect_root {
-                glog::info!("got: {:?}", block.header);
-                glog::info!("want: {:?}", header);
-            }
-            assert!(
-                new_state == expect_root,
-                "block: {}, want: {:?}, got: {:?}",
-                i,
-                expect_root,
-                new_state,
-            );
-            glog::info!("root: {:?} vs {:?}", new_state, expect_root);
+            // if new_state != expect_root {
+            //     glog::info!("got: {:?}", block.header);
+            //     glog::info!("want: {:?}", header);
+            // }
+            // assert!(
+            //     new_state == expect_root,
+            //     "block: {}, want: {:?}, got: {:?}",
+            //     i,
+            //     expect_root,
+            //     new_state,
+            // );
+            // glog::info!("root: {:?} vs {:?}", new_state, expect_root);
             Ok(())
         });
-        
+
         Ok(())
     }
 

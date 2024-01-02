@@ -678,15 +678,14 @@ dependencies = [
 [[package]]
 name = "evm"
 version = "0.37.0"
+source = "git+https://github.com/automata-network/evm-rs#c3bee6f18be73c8e6654a1c2afd3b0b218742470"
 dependencies = [
  "auto_impl",
- "byteorder",
  "environmental",
  "ethereum",
  "evm-core",
  "evm-gasometer",
  "evm-runtime",
- "glog",
  "parity-scale-codec 3.1.5",
  "primitive-types 0.9.1",
  "rlp",
@@ -698,6 +697,7 @@ dependencies = [
 [[package]]
 name = "evm-core"
 version = "0.37.0"
+source = "git+https://github.com/automata-network/evm-rs#c3bee6f18be73c8e6654a1c2afd3b0b218742470"
 dependencies = [
  "parity-scale-codec 3.1.5",
  "primitive-types 0.9.1",
@@ -708,6 +708,7 @@ dependencies = [
 [[package]]
 name = "evm-executor"
 version = "0.1.0"
+source = "git+https://github.com/automata-network/evm-executor-rs#c949369939ed1f93c3db1f659aa9b178b3d9cf23"
 dependencies = [
  "base",
  "crypto",
@@ -727,23 +728,22 @@ dependencies = [
 [[package]]
 name = "evm-gasometer"
 version = "0.37.0"
+source = "git+https://github.com/automata-network/evm-rs#c3bee6f18be73c8e6654a1c2afd3b0b218742470"
 dependencies = [
- "byteorder",
  "environmental",
  "evm-core",
  "evm-runtime",
- "glog",
  "primitive-types 0.9.1",
 ]
 
 [[package]]
 name = "evm-runtime"
 version = "0.37.0"
+source = "git+https://github.com/automata-network/evm-rs#c3bee6f18be73c8e6654a1c2afd3b0b218742470"
 dependencies = [
  "auto_impl",
  "environmental",
  "evm-core",
- "glog",
  "primitive-types 0.9.1",
  "sha3 0.10.8",
 ]
@@ -1216,6 +1216,7 @@ dependencies = [
 [[package]]
 name = "mpt"
 version = "0.1.0"
+source = "git+https://github.com/automata-network/mpt-rs#7dabb93e09471a6406285b184dceb9f89a6630a0"
 dependencies = [
  "base",
  "crypto",
