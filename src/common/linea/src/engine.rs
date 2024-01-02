@@ -5,6 +5,7 @@ use eth_types::{
     Block, BlockHeader, HexBytes, Receipt, Signer, TransactionAccessTuple, TransactionInner,
     Withdrawal, SH160, SU256, SU64,
 };
+use evm_executor::BlockHashGetter;
 use evm_executor::{ExecuteResult, PrecompileSet, TxContext};
 use statedb::StateDB;
 use statedb::StateFetcher;
@@ -78,14 +79,18 @@ impl evm_executor::Engine for Linea {
         tx: &Self::Transaction,
         header: &Self::BlockHeader,
     ) -> Self::Receipt {
+        let tx_hash = tx.hash();
         let mut receipt = Receipt {
             status: (result.success as u64).into(),
-            transaction_hash: tx.hash(),
+            transaction_hash: tx_hash,
             transaction_index: (tx_idx as u64).into(),
             r#type: Some(tx.ty().into()),
             gas_used: result.used_gas.into(),
             cumulative_gas_used: (cumulative_gas_used + result.used_gas).into(),
-            logs: result.logs.clone(),
+            logs: result.logs.clone().into_iter().map(|mut n| {
+                n.transaction_hash = tx_hash;
+                n
+            }).collect::<Vec<_>>(),
             logs_bloom: HexBytes::new(),
 
             // not affect the rlp encoding
@@ -133,9 +138,10 @@ impl evm_executor::Engine for Linea {
         Ok(Some(author))
     }
 
-    fn tx_context<'a>(&self, ctx: &mut TxContext<'a, Self::Transaction, Self::BlockHeader>) {
-        //Set basefee
-        glog::debug!("Set base fee: {:?}", ctx.header.base_fee_per_gas);
+    fn tx_context<'a, H: BlockHashGetter>(
+        &self,
+        ctx: &mut TxContext<'a, Self::Transaction, Self::BlockHeader, H>,
+    ) {
         ctx.block_base_fee = ctx.header.base_fee_per_gas;
         ctx.difficulty = ctx.header.difficulty;
     }

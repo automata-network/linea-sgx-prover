@@ -7,8 +7,8 @@ edition = "2021"
 [features]
 default = ["std"]
 
-std = ["glog/std", "app/std", "base/std", "jsonrpc/std", "serde/std", "serde_json/std", "eth_tools/std", "statedb/std", "mpt/std", "evm-executor/std", "linea/std"]
-tstd = ["sgxlib/tstd", "glog/tstd", "app/tstd", "base/tstd", "jsonrpc/tstd", "serde/tstd", "serde_json/tstd", "eth_tools/tstd", "statedb/tstd", "mpt/tstd", "evm-executor/tstd", "linea/tstd"]
+std = ["glog/std", "app/std", "base/std", "jsonrpc/std", "serde/std", "serde_json/std", "eth_tools/std", "statedb/std", "mpt/std", "evm-executor/std", "linea/std", "eth_types/std"]
+tstd = ["sgxlib/tstd", "glog/tstd", "app/tstd", "base/tstd", "jsonrpc/tstd", "serde/tstd", "serde_json/tstd", "eth_tools/tstd", "statedb/tstd", "mpt/tstd", "evm-executor/tstd", "linea/tstd", "eth_types/tstd"]
 sgx = []
 #sgx = ["sgxlib-ra", "sgxlib-ra/sgx", "prover/sgx", "verifier/sgx", "sgxlib-ra/dcap"]
 
@@ -18,6 +18,7 @@ sgxlib = { git = "https://github.com/automata-network/sgxlib", default-features 
 glog = { git = "https://github.com/automata-network/glog-rs", default-features = false }
 base = { git = "https://github.com/automata-network/base-rs", default-features = false }
 jsonrpc = { git = "https://github.com/automata-network/jsonrpc-rs", default-features = false }
+eth_types = { git = "https://github.com/automata-network/eth-types-rs", default-features = false }
 eth_tools = { path = "../../common/eth_tools", default-features = false }
 statedb = { git = "https://github.com/automata-network/statedb-rs", default-features = false, branch = "v2" }
 mpt = { git = "https://github.com/automata-network/mpt-rs", default-features = false }
@@ -26,3 +27,5 @@ linea = { path = "../../common/linea", default-features = false }
 
 serde = { git = "https://github.com/automata-network/sgxlib-thirdparty", default-features = false }
 serde_json = { git = "https://github.com/automata-network/sgxlib-thirdparty", default-features = false }
+
+rlp = { version = "0.5", default-features = false }
