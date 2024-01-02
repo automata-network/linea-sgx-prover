@@ -4,9 +4,11 @@ use app::{Const, Getter, Var, VarMutex};
 use base::{
     format::debug,
     fs::read_file,
+    thread::parallel,
     trace::{Alive, AliveIter},
 };
 use eth_tools::ExecutionClient;
+use eth_types::{BlockHeader, HexBytes, SH256};
 use evm_executor::{BlockBuilder, ConsensusBlockInfo, Engine, Ethereum};
 use jsonrpc::{JsonrpcErrorObj, MixRpcClient, RpcArgs, RpcServer, RpcServerConfig};
 use linea::{BlockExecutor, Linea};
@@ -33,14 +35,34 @@ impl app::App for App {
         let l2 = self.l2.get(self);
         let chain_id = l2.chain_id().map_err(debug)?;
 
-        for i in self.alive.iter([2600106]) {
+        let tasks = (580000u64..10000000).collect::<Vec<_>>();
+        parallel(&self.alive, tasks, 8, move |i| {
             glog::info!("block: {}", i);
-
             let be = BlockExecutor::new(chain_id.into());
             let pob = be.generate_pob(l2.as_ref(), i.into()).unwrap();
             let db = Database::new(100000);
-            be.execute(&db, pob).unwrap();
-        }
+
+            let expect_root = pob.block.header.state_root;
+            let header = pob.block.header.clone();
+
+            let block = be.execute(l2.as_ref(), &db, pob).unwrap();
+
+            let new_state = block.header.state_root;
+            if new_state != expect_root {
+                glog::info!("got: {:?}", block.header);
+                glog::info!("want: {:?}", header);
+            }
+            assert!(
+                new_state == expect_root,
+                "block: {}, want: {:?}, got: {:?}",
+                i,
+                expect_root,
+                new_state,
+            );
+            glog::info!("root: {:?} vs {:?}", new_state, expect_root);
+            Ok(())
+        });
+
         Ok(())
     }
 
