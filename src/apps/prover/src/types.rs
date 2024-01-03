@@ -1,12 +1,40 @@
 use std::prelude::v1::*;
 
 use app::getargs::{Opt, Options};
+use crypto::Secp256k1PrivateKey;
+use eth_types::SH160;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
     pub server: ServerConfig,
     pub l2: String,
+    pub rollup: RollupConfig,
+    pub verifier: VerifierConfig,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct VerifierConfig {
+    pub endpoint: String,
+    pub contract: SH160,
+    pub relay_account: Secp256k1PrivateKey,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RollupConfig {
+    pub endpoint: String,
+    pub contract: SH160,
+    #[serde(default = "default_wait_block")]
+    pub wait_block: u64,
+    #[serde(default = "default_max_block")]
+    pub max_block: u64,
+}
+
+fn default_wait_block() -> u64 {
+    5
+}
+fn default_max_block() -> u64 {
+    10
 }
 
 #[derive(Deserialize, Debug, Clone)]

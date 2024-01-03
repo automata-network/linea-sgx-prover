@@ -25,7 +25,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let args = serde_json::to_string(&args).unwrap();
     let args_ptr = CString::new(args.as_str()).unwrap();
-    apps::set_ctrlc({
+    app::set_ctrlc({
         let enclave = enclave.clone();
         move || {
             unsafe_ecall!(enclave.eid(), enclave_terminate()).unwrap();

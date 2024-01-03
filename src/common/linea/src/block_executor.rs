@@ -1,18 +1,24 @@
-use std::{prelude::v1::*, sync::Mutex};
+use std::prelude::v1::*;
 
 use crate::Linea;
-use base::format::{debug, parse_ether};
-use eth_tools::{ExecutionClient, MixRpcClient, Pob, RpcClient};
+use base::format::debug;
+use base::trace::Slowlog;
+use crypto::keccak_hash;
+use eth_tools::{ExecutionClient, MixRpcClient, RpcClient, RpcError};
 use eth_types::{
-    Block, BlockHeader, BlockSelector, HexBytes, Receipt, Signer, Transaction, TransactionInner,
-    TxTrait, SH256, SU256, SU64,
+    Block, BlockSelector, FetchState, Transaction, TransactionAccessTuple, TransactionInner, SH256,
+    SU256, SU64,
 };
-use evm_executor::{BlockBuilder, BlockHashGetter, Engine, ExecuteError, PrecompileSet, TxContext};
-use mpt::{BlockStateFetcher, Database, StateCollector, TrieState};
-use statedb::{NoStateFetcher, NodeDB};
+use evm_executor::{BlockBuilder, BlockHashGetter, Engine, Pob};
+use mpt::{Database, StateCollector};
+use statedb::NodeDB;
+use std::borrow::Cow;
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::sync::Arc;
+use std::sync::Mutex;
 
+#[derive(Clone, Debug)]
 pub struct BlockExecutor {
     engine: Linea,
 }
@@ -69,7 +75,7 @@ impl<C: RpcClient> BlockHashGetter for BuilderFetcher<C> {
                 cache.insert(target, hash);
                 hash
             }
-            Err(err) => Default::default(),
+            Err(_) => Default::default(),
         }
     }
 }
@@ -81,17 +87,67 @@ impl BlockExecutor {
         }
     }
 
+    fn fetch_prestate(
+        &self,
+        chain_id: u64,
+        client: &ExecutionClient<Arc<MixRpcClient>>,
+        block: BlockSelector,
+    ) -> Result<Pob, RpcError> {
+        let txs = client.trace_prestate(block)?;
+        let mut unique = BTreeMap::new();
+        let mut codes = BTreeMap::new();
+        for tx in txs {
+            if let Some(result) = tx.result {
+                for (addr, acc) in result {
+                    let code_hash = SH256::from(keccak_hash(&acc.code));
+                    codes.entry(code_hash).or_insert(acc.code);
+                    let acc_stateset = unique.entry(addr).or_insert_with(|| BTreeSet::new());
+                    for key in acc.storage.keys() {
+                        acc_stateset.insert(*key);
+                    }
+                }
+            }
+        }
+
+        let blk = client.get_block(block)?;
+
+        let mut fetch_reqs = Vec::with_capacity(unique.len());
+        for (key, acc) in unique {
+            fetch_reqs.push(FetchState {
+                access_list: Some(Cow::Owned(TransactionAccessTuple {
+                    address: key,
+                    storage_keys: acc.into_iter().collect(),
+                })),
+                code: None,
+            });
+        }
+
+        let prev_block = (blk.header.number.as_u64() - 1).into();
+
+        let states = client.fetch_states(&fetch_reqs, prev_block, true)?;
+        let prev_state_root = if blk.header.number.as_u64() > 0 {
+            client.get_block_header(prev_block)?.state_root
+        } else {
+            SH256::default()
+        };
+        let block_hashes = BTreeMap::new();
+        let pob = Pob::from_proof(chain_id, blk, prev_state_root, block_hashes, codes, states);
+        Ok(pob)
+    }
+
     pub fn generate_pob(
         &self,
         client: &ExecutionClient<Arc<MixRpcClient>>,
         block: BlockSelector,
     ) -> Result<Pob, String> {
         let chain_id = self.engine.signer().chain_id;
-        let mut pob = client
-            .generate_pob(chain_id.as_u64(), block)
-            .map_err(debug)?;
+        let mut pob = {
+            let tag = format!("{:?}", block);
+            let _trace = Slowlog::new_ms(&tag, 500);
+            retry(3, || self.fetch_prestate(chain_id.as_u64(), client, block)).map_err(debug)?
+        };
 
-        let mut db = Database::new(100000);
+        let mut db = Database::new();
         self.resume_db(&mut pob, &mut db);
 
         let builder_fetcher = BuilderFetcher::new(client.clone());
@@ -99,16 +155,17 @@ impl BlockExecutor {
         if true {
             // fill reduction node
             let header = pob.block.header.clone();
-            let mut fetcher =
-                StateCollector::new(client, (pob.block.header.number - SU64::from(1)).into());
+            let mut fetcher = StateCollector::new(
+                client.clone(),
+                (pob.block.header.number - SU64::from(1)).into(),
+            );
             let statedb = mpt::TrieState::new(fetcher.clone(), pob.data.prev_state_root, db);
             let mut builder = BlockBuilder::new(
                 self.engine.clone(),
                 statedb,
                 builder_fetcher.clone(),
                 header,
-            )
-            .unwrap();
+            )?;
             let txs = self.preprocess_txs(pob.block.transactions.clone())?;
             for tx in txs {
                 builder.commit(Arc::new(tx)).map_err(debug)?;
@@ -137,12 +194,7 @@ impl BlockExecutor {
         db.commit();
     }
 
-    pub fn execute(
-        &self,
-        client: &ExecutionClient<Arc<MixRpcClient>>,
-        db: &Database,
-        pob: Pob,
-    ) -> Result<Block, String> {
+    pub fn execute(&self, db: &Database, pob: Pob) -> Result<Block, String> {
         if pob.data.chain_id != self.engine.signer().chain_id.as_u64() {
             return Err(format!(
                 "chain_id mismatch {}!={}",
@@ -157,7 +209,7 @@ impl BlockExecutor {
         let builder_fetcher = BlockHashCache::new(pob.data.block_hashes);
 
         let number = pob.block.header.number.as_u64();
-        let mut header = pob.block.header;
+        let header = pob.block.header;
 
         let statedb = mpt::TrieState::new((), pob.data.prev_state_root, db);
         let mut builder = BlockBuilder::new(
@@ -169,11 +221,17 @@ impl BlockExecutor {
         .unwrap();
         let txs = self.preprocess_txs(pob.block.transactions)?;
         let total = txs.len();
-        let blkno = header.number.as_u64();
         for (idx, tx) in txs.into_iter().enumerate() {
-            glog::info!("[{}][{}/{}]tx: {:?}", blkno, idx, total, tx.hash());
             let tx = Arc::new(tx);
             let receipt = builder.commit(tx.clone()).unwrap();
+            glog::info!(
+                "[{}][{}/{}]tx: {:?}, receipt:{}",
+                number,
+                idx + 1,
+                total,
+                tx.hash(),
+                receipt.status
+            );
             // let expect_receipt = client.get_receipt(&tx.hash()).unwrap().unwrap();
             // if let Err(err) = Receipt::compare(&expect_receipt, receipt) {
             //     glog::info!("diff: {}", err);
@@ -198,22 +256,21 @@ impl BlockExecutor {
 
         Ok(out)
     }
+}
 
-    fn effective_gas_tip(
-        &self,
-        header: &BlockHeader,
-        tx: &TransactionInner,
-    ) -> Result<SU256, ExecuteError> {
-        let base_fee = Some(&header.base_fee_per_gas);
-        let zero = SU256::zero();
-        match tx.effective_gas_tip(base_fee) {
-            Some(n) => Ok(n),
-            None => Err(ExecuteError::InsufficientBaseFee {
-                tx_hash: tx.hash(),
-                block_number: header.number.as_u64().into(),
-                block_base_fee_gwei: parse_ether(base_fee.unwrap_or(&zero), 9),
-                base_fee_gwei: parse_ether(&tx.effective_gas_tip(None).unwrap(), 9),
-            }),
+fn retry<T, E, F>(retry: usize, f: F) -> Result<T, E>
+where
+    F: Fn() -> Result<T, E>,
+{
+    let mut error = None;
+    for i in 0..retry {
+        match f() {
+            Ok(n) => return Ok(n),
+            Err(err) => {
+                error = Some(err);
+                base::thread::sleep_ms((i as u64 + 1) * 300);
+            }
         }
     }
+    return Err(error.unwrap());
 }
