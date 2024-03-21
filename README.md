@@ -9,6 +9,8 @@
 - [x] SGX prover submits rollup proofs
 - [x] Implement the Rust version of Linea zktrie that aligns with the new spec [shomei](https://github.com/Consensys/shomei)
 - [ ] Integrate with the new zktrie to the SGX prover and generate the root_hash (working in progress)
+- [ ] Submit the root_hash of zktrie to the SGX Verifier
+
 
 ## Getting Started
 
