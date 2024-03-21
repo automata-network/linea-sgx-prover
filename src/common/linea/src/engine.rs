@@ -1,17 +1,12 @@
 use std::prelude::v1::*;
 
-use base::format::debug;
 use eth_types::{
-    Block, BlockHeader, HexBytes, Receipt, Signer, TransactionAccessTuple, TransactionInner,
-    Withdrawal, SH160, SU256, SU64,
+    Block, BlockHeader, HexBytes, Receipt, Signer, TransactionInner, Withdrawal, SH160, SU256,
 };
 use evm_executor::BlockHashGetter;
 use evm_executor::{ExecuteResult, PrecompileSet, TxContext};
 use statedb::StateDB;
-use statedb::StateFetcher;
 use std::sync::Arc;
-
-use mpt::Database;
 
 #[derive(Debug, Clone)]
 pub struct Linea {
@@ -51,8 +46,6 @@ impl Linea {
     }
 }
 
-type Trie<F> = mpt::TrieState<F, Database>;
-
 impl evm_executor::Engine for Linea {
     type Block = Block;
     type BlockHeader = BlockHeader;
@@ -64,7 +57,7 @@ impl evm_executor::Engine for Linea {
     fn new_block_header(
         &self,
         prev_header: &Self::BlockHeader,
-        ctx: Self::NewBlockContext,
+        _ctx: Self::NewBlockContext,
     ) -> Self::BlockHeader {
         Self::BlockHeader {
             ..prev_header.clone()
@@ -77,7 +70,7 @@ impl evm_executor::Engine for Linea {
         result: &ExecuteResult,
         tx_idx: usize,
         tx: &Self::Transaction,
-        header: &Self::BlockHeader,
+        _header: &Self::BlockHeader,
     ) -> Self::Receipt {
         let tx_hash = tx.hash();
         let mut receipt = Receipt {
@@ -87,10 +80,15 @@ impl evm_executor::Engine for Linea {
             r#type: Some(tx.ty().into()),
             gas_used: result.used_gas.into(),
             cumulative_gas_used: (cumulative_gas_used + result.used_gas).into(),
-            logs: result.logs.clone().into_iter().map(|mut n| {
-                n.transaction_hash = tx_hash;
-                n
-            }).collect::<Vec<_>>(),
+            logs: result
+                .logs
+                .clone()
+                .into_iter()
+                .map(|mut n| {
+                    n.transaction_hash = tx_hash;
+                    n
+                })
+                .collect::<Vec<_>>(),
             logs_bloom: HexBytes::new(),
 
             // not affect the rlp encoding
@@ -104,9 +102,7 @@ impl evm_executor::Engine for Linea {
     }
 
     fn evm_config(&self) -> evm::Config {
-        let mut cfg = evm::Config::london();
-        // cfg.max_initcode_size = None;
-        cfg
+        evm::Config::london()
     }
 
     fn precompile(&self) -> PrecompileSet {
@@ -119,8 +115,8 @@ impl evm_executor::Engine for Linea {
 
     fn process_withdrawals<D: StateDB>(
         &mut self,
-        statedb: &mut D,
-        withdrawals: &[Self::Withdrawal],
+        _statedb: &mut D,
+        _withdrawals: &[Self::Withdrawal],
     ) -> Result<(), statedb::Error> {
         Ok(())
     }
@@ -148,8 +144,8 @@ impl evm_executor::Engine for Linea {
 
     fn finalize_block<D: StateDB>(
         &mut self,
-        statedb: &mut D,
-        mut header: Self::BlockHeader,
+        _statedb: &mut D,
+        header: Self::BlockHeader,
         txs: Vec<Arc<Self::Transaction>>,
         receipts: Vec<Self::Receipt>,
         withdrawals: Option<Vec<Self::Withdrawal>>,

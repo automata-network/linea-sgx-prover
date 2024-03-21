@@ -3,6 +3,7 @@ members = [
     "bin/std/prover",
 
     "src/apps/prover",
-    "src/common/eth_tools",
     "src/common/linea",
+    "src/common/mimc",
+    "src/common/zktrie",
 ]

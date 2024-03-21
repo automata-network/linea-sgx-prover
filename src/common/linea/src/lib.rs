@@ -8,3 +8,12 @@ pub use block_executor::*;
 
 mod engine;
 pub use engine::*;
+
+mod batch_task;
+pub use batch_task::*;
+
+mod verifier;
+pub use verifier::*;
+
+mod prover;
+pub use prover::*;

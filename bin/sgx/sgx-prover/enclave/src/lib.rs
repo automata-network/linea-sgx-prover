@@ -23,7 +23,7 @@ lazy_static::lazy_static! {
 pub unsafe extern "C" fn enclave_entrypoint(eid: u64, args: *const c_char) -> sgx_status_t {
     glog::init();
     glog::info!("Initialize Enclave!");
-    match apps::run_enclave(&APP, eid, args) {
+    match app::run_enclave(&APP, eid, args) {
         Ok(()) => sgx_status_t::SGX_SUCCESS,
         Err(err) => err,
     }
@@ -31,7 +31,7 @@ pub unsafe extern "C" fn enclave_entrypoint(eid: u64, args: *const c_char) -> sg
 
 #[no_mangle]
 pub unsafe extern "C" fn enclave_terminate() -> sgx_status_t {
-    apps::terminate(&APP);
+    app::terminate(&APP);
     sgx_status_t::SGX_SUCCESS
 }
 
