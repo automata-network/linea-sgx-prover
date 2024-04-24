@@ -10,15 +10,6 @@ pub const BYTES: usize = 32;
 #[PrimeFieldGenerator = "4"]
 pub struct Fr(FrRepr);
 
-pub mod fr2 {
-    use super::*;
-
-    #[derive(PrimeField)]
-    #[PrimeFieldModulus = "21888242871839275222246405745257275088548364400416034343698204186575808495617"]
-    #[PrimeFieldGenerator = "7"]
-    pub struct Fr2(FrRepr);
-}
-
 lazy_static! {
     pub static ref R_SQUARE: Fr = Fr::from_raw_repr(FrRepr([
         2726216793283724667,

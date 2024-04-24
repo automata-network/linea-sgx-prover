@@ -25,6 +25,7 @@ evm-executor = { git = "https://github.com/automata-network/evm-executor-rs", de
 evm = { git = "https://github.com/automata-network/evm-rs", default-features = false }
 solidity = { git = "https://github.com/automata-network/solidity-rs", default-features = false }
 sgxlib-ra = { git = "https://github.com/automata-network/sgxlib-ra", default-features = false, optional = true }
+scale-info-derive = "=2.10"
 
 lazy_static = { version = "1.4.0", default-features = false, features = ["spin_no_std"] }
 rlp = { version = "0.5", default-features = false }
