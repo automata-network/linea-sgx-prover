@@ -5,21 +5,24 @@ use app::{Const, Getter, Var, VarMutex};
 use base::{
     format::debug,
     fs::read_file,
-    thread::{self, parallel, DeferFunc},
+    thread::{self, parallel},
     trace::Alive,
 };
 use crypto::{keccak_encode, Secp256r1PrivateKey, Secp256r1Signature};
 use eth_tools::ExecutionClient;
-use eth_types::{Block, EthereumEngineTypes, SH256, SU64};
-use evm_executor::Poe;
+use eth_types::{Block, EthereumEngineTypes, HexBytes, SH160, SH256, SU64};
+use evm_executor::{BlockBuilder, Poe};
 use jsonrpc::{JsonrpcErrorObj, MixRpcClient, RpcArgs, RpcServer, RpcServerConfig};
 use linea::{
-    BatchTask, BatchTaskSubscriber, BatchTaskSubscriberConfig, BlockExecutor, Prover, Verifier,
+    account_key, BatchTask, BatchTaskSubscriber, BatchTaskSubscriberConfig, BlockExecutor, Prover,
+    Verifier, ZkStateAccount, ZkTrieState,
 };
 use mpt::Database;
+use shomei::RollupgetZkEVMStateMerkleProofV0Resp;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::Mutex;
+use zktrie::Trace;
 
 use crate::{Args, Config};
 
@@ -35,6 +38,7 @@ pub struct App {
     pub prover: Var<Prover>,
     pub cfg: Var<Config>,
     pub build_context: Var<BuildContext>,
+    pub shomei: Var<shomei::Client>,
 }
 
 impl app::App for App {
@@ -48,17 +52,17 @@ impl app::App for App {
         let l2 = self.l2.get(self);
         let build_ctx = self.build_context.get(self);
 
-        thread::spawn("prover-attested-monitor".into(), {
-            let prover = prover.clone();
-            let relay_account = cfg.verifier.relay_account.clone();
-            let verifier = verifier.clone();
-            move || {
-                prover.monitor_attested(&relay_account, &verifier, |prvkey| {
-                    let prover_key = prvkey.public().eth_accountid().into();
-                    verifier.generate_prover_report(&prover_key, false)
-                });
-            }
-        });
+        // thread::spawn("prover-attested-monitor".into(), {
+        //     let prover = prover.clone();
+        //     let relay_account = cfg.verifier.relay_account.clone();
+        //     let verifier = verifier.clone();
+        //     move || {
+        //         prover.monitor_attested(&relay_account, &verifier, |prvkey| {
+        //             let prover_key = prvkey.public().eth_accountid().into();
+        //             verifier.generate_prover_report(&prover_key, false)
+        //         });
+        //     }
+        // });
 
         thread::spawn("jsonrpc".into(), {
             let srv = self.server.get(self);
@@ -67,33 +71,35 @@ impl app::App for App {
                 let mut srv = srv.lock().unwrap();
                 srv.run();
             }
-        });
+        })
+        .join()
+        .unwrap();
 
-        let subscriber = {
-            let cfg = BatchTaskSubscriberConfig {
-                tag: format!("batch-task"),
-                contract: cfg.rollup.contract,
-                max_block: cfg.rollup.max_block,
-                wait_block: cfg.rollup.wait_block,
-            };
-            BatchTaskSubscriber::new(self.alive.clone(), cfg, rollup_el.0.clone())
-        };
-        subscriber
-            .subscribe({
-                let alive = self.alive.clone();
-                let prover = prover.clone();
-                move |task| {
-                    if !prover.wait_attested(&alive) {
-                        glog::error!("cancel task: {:?}", task);
-                        return;
-                    }
-                    if let Err(err) = build_ctx.execute_task(task.clone()) {
-                        glog::error!("prove task[{:?}] failed: {:?}", task.blocks, err);
-                        return;
-                    };
-                }
-            })
-            .unwrap();
+        // let subscriber = {
+        //     let cfg = BatchTaskSubscriberConfig {
+        //         tag: format!("batch-task"),
+        //         contract: cfg.rollup.contract,
+        //         max_block: cfg.rollup.max_block,
+        //         wait_block: cfg.rollup.wait_block,
+        //     };
+        //     BatchTaskSubscriber::new(self.alive.clone(), cfg, rollup_el.0.clone())
+        // };
+        // subscriber
+        //     .subscribe({
+        //         let alive = self.alive.clone();
+        //         let prover = prover.clone();
+        //         move |task| {
+        //             if !prover.wait_attested(&alive) {
+        //                 glog::error!("cancel task: {:?}", task);
+        //                 return;
+        //             }
+        //             if let Err(err) = build_ctx.execute_task(task.clone()) {
+        //                 glog::error!("prove task[{:?}] failed: {:?}", task.blocks, err);
+        //                 return;
+        //             };
+        //         }
+        //     })
+        //     .unwrap();
 
         Ok(())
     }
@@ -110,6 +116,7 @@ pub struct BuildContext {
     pub prover: Arc<Prover>,
     pub verifier: Arc<Verifier<Arc<MixRpcClient>, EthereumEngineTypes>>,
     pub l2: Arc<ExecutionClient<Arc<MixRpcClient>>>,
+    pub shomei: Arc<shomei::Client>,
 }
 
 impl BuildContext {
@@ -122,6 +129,64 @@ impl BuildContext {
         let report = poe.encode();
 
         verifier.commit_batch(&cfg.verifier.relay_account, &batch_id, &report)?;
+        Ok(())
+    }
+
+    fn generate_poe_v2(
+        &self,
+        chain_id: u64,
+        result: RollupgetZkEVMStateMerkleProofV0Resp,
+        block: Block,
+    ) -> Result<(), String> {
+        glog::info!("start root_hash: {:?}", result.zk_parent_state_root_hash);
+        glog::info!("end root_hash: {:?}", result.zk_end_state_root_hash);
+        let block_trace = &result.zk_state_merkle_proof[0];
+        let current_block = (block.header.number.as_u64() - 1).into();
+        let proofs = self
+            .shomei
+            .fetch_proof_by_traces(&block_trace, current_block)
+            .map_err(debug)?;
+
+        let mut codes = Vec::new();
+        for t in block_trace {
+            if t.location().len() == 0 {
+                let value = t.read_value();
+                if value.len() > 0 {
+                    let acc = ZkStateAccount::from_bytes(value);
+                    let mut addr = SH160::default();
+                    addr.0.copy_from_slice(t.key());
+                    codes.push(addr);
+                }
+            }
+        }
+        let codes = self.l2.get_codes(&codes, current_block).map_err(debug)?;
+
+        let mut db = zktrie::MemStore::from_traces(&block_trace).map_err(debug)?;
+        db.add_codes(codes);
+
+        for proof in proofs {
+            let hkey = account_key(&proof.account_proof.key);
+            let root_hash = if let Some((leaf_index, proof)) = proof.account_proof.inclusion() {
+                db.add_proof(
+                    leaf_index,
+                    hkey,
+                    proof.value.as_ref().map(|n| n.as_bytes()),
+                    &proof.proof_related_nodes,
+                )
+                .map_err(debug)?
+            } else {
+                glog::info!("proof: {:?}", proof.account_proof);
+                continue;
+            };
+            glog::info!(
+                "[{:?}] state root_hash: {:?}",
+                proof.account_proof.key,
+                root_hash
+            );
+        }
+
+        let be = BlockExecutor::new(chain_id.into());
+        be.execute_v2(db, &block_trace, block)?;
         Ok(())
     }
 
@@ -209,6 +274,33 @@ pub struct Api {
 }
 
 impl Api {
+    fn test(&self, arg: RpcArgs<(u64,)>) -> Result<(), JsonrpcErrorObj> {
+        let block_number = arg.params.0;
+        let result = self
+            .build_context
+            .shomei
+            .fetch_proof(block_number, block_number)
+            .unwrap();
+
+        let chain_id = self
+            .build_context
+            .l2
+            .chain_id()
+            .map_err(|e| JsonrpcErrorObj::server("fetch chain id fail", e))?;
+
+        let block = self
+            .build_context
+            .l2
+            .get_block(block_number.into())
+            .map_err(JsonrpcErrorObj::unknown)?;
+        glog::info!("blk: {:?}", block);
+
+        self.build_context
+            .generate_poe_v2(chain_id, result, block)
+            .map_err(JsonrpcErrorObj::client)?;
+        Ok(())
+    }
+
     fn prove(&self, arg: RpcArgs<(SU64, SU64)>) -> Result<Poe, JsonrpcErrorObj> {
         let start = arg.params.0.as_u64();
         let end = arg.params.1.as_u64();
@@ -236,6 +328,13 @@ impl Api {
     }
 }
 
+impl Getter<shomei::Client> for App {
+    fn generate(&self) -> shomei::Client {
+        let cfg = self.cfg.get(self);
+        shomei::Client::new(&self.alive, cfg.shomei.clone())
+    }
+}
+
 impl Getter<RpcServer<Api>> for App {
     fn generate(&self) -> RpcServer<Api> {
         let args = self.args.get();
@@ -258,9 +357,11 @@ impl Getter<RpcServer<Api>> for App {
             http_max_body_length: Some(cfg.server.body_limit),
             ws_frame_size: 64 << 10,
             threads: cfg.server.workers,
+            max_idle_secs: Some(60),
         };
         let mut srv = RpcServer::new(self.alive.clone(), server_cfg, Arc::new(api)).unwrap();
         srv.jsonrpc("prove", Api::prove);
+        srv.jsonrpc("test", Api::test);
         srv
     }
 }
@@ -338,6 +439,7 @@ impl Getter<BuildContext> for App {
             prover: self.prover.get(self),
             verifier: self.verifier.get(self),
             l2: self.l2.get(self),
+            shomei: self.shomei.get(self),
         };
         build_ctx
     }

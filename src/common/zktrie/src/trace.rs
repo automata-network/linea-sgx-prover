@@ -1,27 +1,52 @@
+use core::convert::TryFrom;
 use std::prelude::v1::*;
 
 use eth_types::{HexBytes, SH256, SU256, SU64, U64};
 use rlp_derive::RlpDecodable;
+use serde::Deserialize;
 
 use crate::{trie_hash, utils, FlattenedLeaf, KeyRange, LeafNode, LeafOpening, Node};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize)]
+#[serde(try_from = "RawTrace")]
 pub enum Trace {
-    Deletion(DeletionTrace),
-    Insertion(InsertionTrace),
     Read(ReadTrace),
     ReadZero(ReadZeroTrace),
+    Insertion(InsertionTrace),
     Update(UpdateTrace),
+    Deletion(DeletionTrace),
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RawTrace {
+    r#type: usize,
+    #[serde(flatten)]
+    value: serde_json::Value,
+}
+
+impl TryFrom<RawTrace> for Trace {
+    type Error = serde_json::Error;
+    fn try_from(value: RawTrace) -> Result<Self, Self::Error> {
+        Ok(match value.r#type {
+            0 => Trace::Read(serde_json::from_value(value.value)?),
+            1 => Trace::ReadZero(serde_json::from_value(value.value)?),
+            2 => Trace::Insertion(serde_json::from_value(value.value)?),
+            3 => Trace::Update(serde_json::from_value(value.value)?),
+            4 => Trace::Deletion(serde_json::from_value(value.value)?),
+            _ => return unreachable!(),
+        })
+    }
 }
 
 impl Trace {
     pub fn old_state(&self) -> (u64, SH256) {
         match self {
-            Trace::Deletion(n) => (n.next_free_node, n.old_sub_root),
+            Trace::Deletion(n) => (n.new_next_free_node, n.old_sub_root),
             Trace::Insertion(n) => (n.new_next_free_node - 1, n.old_sub_root),
             Trace::Read(n) => (n.next_free_node, n.sub_root),
             Trace::ReadZero(n) => (n.next_free_node, n.sub_root),
-            Trace::Update(n) => (n.next_free_node, n.old_sub_root),
+            Trace::Update(n) => (n.new_next_free_node, n.old_sub_root),
         }
     }
 
@@ -34,13 +59,33 @@ impl Trace {
         Node::top_node(next_free_node, sub_root)
     }
 
-    pub fn key(&self) -> &[u8] {
+    pub fn key(&self) -> &HexBytes {
         match self {
             Self::Deletion(n) => &n.key,
             Self::Insertion(n) => &n.key,
             Self::Read(n) => &n.key,
             Self::ReadZero(n) => &n.key,
             Self::Update(n) => &n.key,
+        }
+    }
+
+    pub fn read_value(&self) -> &[u8] {
+        match self {
+            Self::Deletion(n) => &[],
+            Self::Insertion(n) => &[],
+            Self::Read(n) => &n.value,
+            Self::ReadZero(n) => &[],
+            Self::Update(n) => &[],
+        }
+    }
+
+    pub fn location(&self) -> &HexBytes {
+        match self {
+            Self::Deletion(n) => &n.location,
+            Self::Insertion(n) => &n.location,
+            Self::Read(n) => &n.location,
+            Self::ReadZero(n) => &n.location,
+            Self::Update(n) => &n.location,
         }
     }
 
@@ -60,12 +105,12 @@ impl Trace {
                 right_index: n.leaf.next_leaf.as_u64(),
             },
             Self::Update(n) => KeyRange {
-                left_index: n.prior_update_leaf.prev_leaf.as_u64(),
+                left_index: n.prior_updated_leaf.prev_leaf.as_u64(),
                 center: Some(FlattenedLeaf {
                     leaf_index: n.proof.leaf_index,
                     leaf_value: n.old_value.clone().into(),
                 }),
-                right_index: n.prior_update_leaf.next_leaf.as_u64(),
+                right_index: n.prior_updated_leaf.next_leaf.as_u64(),
             },
             Self::Insertion(n) => KeyRange {
                 left_index: n.left_proof.leaf_index,
@@ -85,7 +130,7 @@ impl Trace {
 
     pub fn nodes(&self) -> Vec<Node> {
         match self {
-            Self::Update(n) => n.proof.build_nodes(Some(&n.prior_update_leaf)),
+            Self::Update(n) => n.proof.build_nodes(Some(&n.prior_updated_leaf)),
             Self::Insertion(n) => [
                 n.left_proof.build_nodes(Some(&n.prior_left_leaf)),
                 n.new_proof.build_nodes(None),
@@ -132,23 +177,27 @@ impl rlp::Decodable for Trace {
     }
 }
 
-#[derive(Clone, Debug, RlpDecodable)]
+#[derive(Clone, Debug, RlpDecodable, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct UpdateTrace {
     pub location: HexBytes,
-    pub next_free_node: u64,
+    pub new_next_free_node: u64,
     pub old_sub_root: SH256,
     pub new_sub_root: SH256,
     pub proof: TraceProof,
     pub key: HexBytes,
     pub old_value: HexBytes,
     pub new_value: HexBytes,
-    pub prior_update_leaf: LeafOpening,
+    pub prior_updated_leaf: LeafOpening,
 }
 
-#[derive(Debug, Clone, RlpDecodable)]
+#[derive(Debug, Clone, RlpDecodable, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct DeletionTrace {
-    pub location: u64,
-    pub next_free_node: u64,
+    pub location: HexBytes,
+    pub new_next_free_node: u64,
     pub old_sub_root: SH256,
     pub new_sub_root: SH256,
     pub left_proof: TraceProof,
@@ -161,10 +210,12 @@ pub struct DeletionTrace {
     pub prior_right_leaf: LeafOpening,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct TraceProof {
     pub leaf_index: u64,
-    pub sibling: Vec<SH256>,
+    pub siblings: Vec<SH256>,
 }
 
 impl TraceProof {
@@ -176,9 +227,9 @@ impl TraceProof {
             Some(leaf) => Node::leaf(trie_path[trie_path.len() - 1..].to_vec(), leaf.to_bytes()),
             None => Node::empty_leaf().as_ref().clone(),
         };
-        for idx in 0..self.sibling.len() {
-            let sibling = self.sibling[idx];
-            let new_root = if trie_path[self.sibling.len() - idx] == 0 {
+        for idx in 0..self.siblings.len() {
+            let sibling = self.siblings[idx];
+            let new_root = if trie_path[self.siblings.len() - idx] == 0 {
                 Node::raw_branch(*root.hash(), sibling)
             } else {
                 Node::raw_branch(sibling, *root.hash())
@@ -194,20 +245,22 @@ impl TraceProof {
 impl rlp::Decodable for TraceProof {
     fn decode(rlp: &rlp::Rlp) -> Result<Self, rlp::DecoderError> {
         let leaf_index: u64 = rlp.val_at(0)?;
-        let mut sibling = Vec::new();
+        let mut siblings = Vec::new();
         let rlp = rlp.at(1)?;
         for i in 0..rlp.item_count()? {
             let node: SH256 = rlp.val_at(i)?;
-            sibling.push(node);
+            siblings.push(node);
         }
         Ok(TraceProof {
             leaf_index,
-            sibling,
+            siblings,
         })
     }
 }
 
-#[derive(Clone, Debug, RlpDecodable)]
+#[derive(Clone, Debug, RlpDecodable, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct InsertionTrace {
     pub location: HexBytes,
     pub new_next_free_node: u64,
@@ -222,7 +275,9 @@ pub struct InsertionTrace {
     pub prior_right_leaf: LeafOpening,
 }
 
-#[derive(Clone, Debug, RlpDecodable)]
+#[derive(Clone, Debug, RlpDecodable, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct ReadTrace {
     pub location: HexBytes,
     pub next_free_node: u64,
@@ -233,7 +288,9 @@ pub struct ReadTrace {
     pub value: HexBytes,
 }
 
-#[derive(Clone, Debug, RlpDecodable)]
+#[derive(Clone, Debug, RlpDecodable, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct ReadZeroTrace {
     pub location: HexBytes,
     pub next_free_node: u64,

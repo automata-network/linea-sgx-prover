@@ -3,6 +3,7 @@ use std::prelude::v1::*;
 
 use crypto::keccak_hash;
 use eth_types::{HexBytes, SH256, SU256};
+use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::sync::Arc;
@@ -76,8 +77,19 @@ impl Node {
         Node::branch(&left, sub_root)
     }
 
+    pub fn raw_branch_auto(path: u8, leaf: SH256, sibling: SH256) -> Node {
+        if path == 0 {
+            Self::raw_branch(leaf, sibling)
+        } else {
+            Self::raw_branch(sibling, leaf)
+        }
+    }
+
     pub fn raw_branch(left: SH256, right: SH256) -> Node {
-        Self::new(NodeValue::Branch(BranchNode { left: left.into(), right }))
+        Self::new(NodeValue::Branch(BranchNode {
+            left: left.into(),
+            right,
+        }))
     }
 
     pub fn branch(left: &Arc<Node>, right: SH256) -> Node {
@@ -89,19 +101,22 @@ impl Node {
 
     pub fn leaf(path: Vec<u8>, value: Vec<u8>) -> Node {
         if path == &[LeafType::NextFreeNode as u8] {
-            Self::new(NodeValue::NextFree(LeafNode { path: path.into(), value: value.into() }))
+            Self::new(NodeValue::NextFree(LeafNode {
+                path: path.into(),
+                value: value.into(),
+            }))
         } else {
-            Self::new(NodeValue::Leaf(LeafNode { path: path.into(), value: value.into() }))
+            Self::new(NodeValue::Leaf(LeafNode {
+                path: path.into(),
+                value: value.into(),
+            }))
         }
     }
 
     pub fn next_free_node(index: u64) -> Node {
         let mut val = vec![0_u8; 32];
         val[24..].copy_from_slice(&index.to_be_bytes());
-        Node::new(NodeValue::NextFree(LeafNode {
-            path: HexBytes::new(),
-            value: val.into(),
-        }))
+        Node::new(NodeValue::new_next_free(val.into()))
     }
 
     pub fn new(value: NodeValue) -> Node {
@@ -172,6 +187,13 @@ impl NodeValue {
         }
     }
 
+    pub fn new_next_free(val: HexBytes) -> NodeValue {
+        NodeValue::NextFree(LeafNode {
+            path: HexBytes::new(),
+            value: val,
+        })
+    }
+
     pub fn branch(&self) -> Option<&BranchNode> {
         match self {
             Self::Branch(node) => Some(node),
@@ -204,6 +226,34 @@ impl NodeValue {
         let mut out = Vec::new();
         self.write_to(&mut out);
         out
+    }
+
+    pub fn parse_leaf(path: HexBytes, buf: HexBytes) -> NodeValue {
+        NodeValue::Leaf(LeafNode { path, value: buf })
+    }
+
+    pub fn parse_root(buf: &[u8]) -> Result<NodeValue, Error> {
+        if buf.len() != 64 {
+            return Err(Error::InvalidBranchNode(buf.to_vec().into()));
+        }
+        Ok(NodeValue::Branch(BranchNode {
+            left: Arc::new(Node::new(Self::parse_leaf(
+                HexBytes::new(),
+                buf[..32].into(),
+            )))
+            .into(),
+            right: SH256::from_slice(&buf[32..]),
+        }))
+    }
+
+    pub fn parse_branch(buf: &[u8]) -> Result<NodeValue, Error> {
+        if buf.len() != 64 {
+            return Err(Error::InvalidBranchNode(buf.to_vec().into()));
+        }
+        Ok(NodeValue::Branch(BranchNode {
+            left: SH256::from_slice(&buf[..32]).into(),
+            right: SH256::from_slice(&buf[32..]),
+        }))
     }
 
     pub fn write_to(&self, out: &mut Vec<u8>) {
@@ -330,7 +380,7 @@ pub struct LeafNode {
     pub value: HexBytes,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct LeafOpening {
     pub hkey: SH256,
     pub hval: SH256,

@@ -1,10 +1,12 @@
 use std::prelude::v1::*;
 
 use crate::Linea;
+use crate::ZkTrieState;
 use base::format::debug;
 use base::trace::Slowlog;
 use crypto::keccak_hash;
 use eth_tools::{ExecutionClient, MixRpcClient, RpcClient, RpcError};
+use eth_types::Signer;
 use eth_types::{
     Block, BlockSelector, FetchState, Transaction, TransactionAccessTuple, TransactionInner, SH256,
     SU256, SU64,
@@ -194,6 +196,28 @@ impl BlockExecutor {
         db.commit();
     }
 
+    pub fn execute_v2<D: zktrie::Database<Node = zktrie::Node>>(
+        &self,
+        db: D,
+        traces: &[zktrie::Trace],
+        block: Block,
+    ) -> Result<(), String> {
+        let root = traces[0].old_top_hash();
+        
+        let statedb = ZkTrieState::new_from_trace(db, &traces[0]);
+        let block_hash_cache = BlockHashCache::new(BTreeMap::new());
+        let mut builder =
+            BlockBuilder::new(self.engine.clone(), statedb, block_hash_cache, block.header)?;
+        let txs = self.preprocess_txs(block.transactions)?;
+
+        for (idx, tx) in txs.into_iter().enumerate() {
+            glog::info!("[{}] {:?}", idx, tx);
+            let tx = Arc::new(tx);
+            let receipt = builder.commit(tx.clone()).unwrap();
+        }
+        Ok(())
+    }
+
     pub fn execute(&self, db: &Database, pob: Pob) -> Result<Block, String> {
         if pob.data.chain_id != self.engine.signer().chain_id.as_u64() {
             return Err(format!(
@@ -217,8 +241,7 @@ impl BlockExecutor {
             statedb,
             builder_fetcher,
             header.clone(),
-        )
-        .unwrap();
+        )?;
         let txs = self.preprocess_txs(pob.block.transactions)?;
         let total = txs.len();
         for (idx, tx) in txs.into_iter().enumerate() {
@@ -246,7 +269,14 @@ impl BlockExecutor {
 
     fn preprocess_txs(&self, txs: Vec<Transaction>) -> Result<Vec<TransactionInner>, String> {
         let mut out = Vec::with_capacity(txs.len());
-        for tx in txs {
+        let chain_id = self.engine.signer().chain_id.as_u64();
+        for mut tx in txs {
+            // fix bug in besu
+            if tx.r#type.as_u64() > 0 {
+                if tx.v.as_u64() > 1 {
+                    tx.v = (tx.v.as_u64() - chain_id * 2 - 8 - 27).into();
+                }
+            }
             let tx = match tx.inner() {
                 Some(tx) => tx,
                 None => return Err("invalid transaction".into()),

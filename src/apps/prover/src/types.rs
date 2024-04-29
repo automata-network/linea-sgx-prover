@@ -11,6 +11,7 @@ pub struct Config {
     pub l2: String,
     pub rollup: RollupConfig,
     pub verifier: VerifierConfig,
+    pub shomei: shomei::ShomeiConfig,
 }
 
 #[derive(Debug, Deserialize)]

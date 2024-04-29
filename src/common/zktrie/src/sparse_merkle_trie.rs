@@ -1,7 +1,7 @@
 use std::{io::Write, prelude::v1::*};
 
 use crate::{prefix_len, utils, Error, FlattenedLeaf, HashOrNode, KeyRange, Node, NodeValue};
-use eth_types::{HexBytes, SH256};
+use eth_types::{HexBytes, SH160, SH256};
 use std::sync::Arc;
 
 pub const ZK_TRIE_DEPTH: usize = 40;
@@ -13,6 +13,7 @@ pub trait Database {
     fn get_nearest_keys(&self, root: &SH256, k: &SH256) -> KeyRange;
     fn update_index(&mut self, k: SH256, v: FlattenedLeaf);
     fn remove_index(&mut self, k: &SH256);
+    fn get_code(&mut self, hash: &SH256) -> Option<Arc<HexBytes>>;
 }
 
 pub struct NodeData {
@@ -21,14 +22,12 @@ pub struct NodeData {
 
 #[derive(Debug)]
 pub struct SpareMerkleTrie {
-    root: Arc<Node>,
+    root: SH256,
 }
 
 impl SpareMerkleTrie {
-    pub fn new<D: Database<Node = Node>>(db: &D, root_hash: SH256) -> Result<Self, Error> {
-        let root = db
-            .get_node(&root_hash)?
-            .ok_or(Error::NodeNotFound(0, root_hash))?;
+    pub fn new(root_hash: SH256) -> Self {
+
         Ok(Self { root })
     }
 
@@ -57,9 +56,11 @@ impl SpareMerkleTrie {
 
     pub fn set_next_free_node(&mut self, free: u64) -> Result<(), Error> {
         let branch_node = self.root.raw().branch().unwrap();
-        self.root = Arc::new(branch_node
-            .new_replace(0, &Arc::new(Node::next_free_node(free)))
-            .into());
+        self.root = Arc::new(
+            branch_node
+                .new_replace(0, &Arc::new(Node::next_free_node(free)))
+                .into(),
+        );
         Ok(())
     }
 

@@ -3,6 +3,8 @@
 #[macro_use]
 extern crate sgxlib as std;
 
+use std::prelude::v1::*;
+
 mod trie;
 use eth_types::{SH256, HexBytes};
 pub use trie::*;
@@ -35,4 +37,6 @@ pub enum Error {
     ZKTrieKeyNotFound(HexBytes),
     ZkTrieParseNodeFail(HexBytes, &'static str),
     HashFail(String),
+    InvalidBranchNode(HexBytes),
+    InvalidProof,
 }

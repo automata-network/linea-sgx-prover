@@ -1,29 +1,37 @@
 use std::prelude::v1::*;
 
-use eth_types::{SH256, HexBytes};
+use crypto::keccak_hash;
+use eth_types::{HexBytes, SH256};
 use lazy_static::lazy_static;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::{
-    trie_hash, utils, Database, Error, LeafOpening, Node, Trace, TraceProof, EMPTY_TRIE_NODE,
-    ZK_TRIE_DEPTH,
+    trie_hash, utils, Database, Error, LeafOpening, Node, NodeValue, Trace, TraceProof,
+    EMPTY_TRIE_NODE, ZK_TRIE_DEPTH,
 };
 
 #[derive(Debug)]
 pub struct MemStore {
+    prefix: u64,
     nodes: BTreeMap<SH256, Arc<Node>>,
     // index: BTreeMap<SH256, FlattenedLeaf>,
     // traces: BTreeMap<SH256, Vec<Trace>>,
     index: LevelMap,
     staging: BTreeMap<SH256, FlattenedLeaf>,
+    codes: BTreeMap<SH256, Arc<HexBytes>>,
+}
+
+pub struct MemStoreSlot<'a> {
+    prefix: u64,
+    db: &'a mut MemStore,
 }
 
 #[derive(Debug)]
 pub struct LevelMap {
     // root: SH256,
     // down: Option<Arc<LevelMap>>,
-    vals: BTreeMap<SH256, BTreeMap<SH256, KeyRange>>,
+    vals: BTreeMap<SH256, BTreeMap<(u64, SH256), KeyRange>>,
 }
 
 // fn to_range(p: &TraceProof, l: &LeafOpening) -> (SH256, FlattenedLeaf) {
@@ -37,20 +45,15 @@ pub struct LevelMap {
 // }
 
 impl LevelMap {
-    pub fn from_traces(traces: &[Trace]) -> Result<Self, Error> {
+    pub fn from_traces(prefix: u64, traces: &[Trace]) -> Result<Self, Error> {
         let mut idx = 0;
         let mut base = LevelMap::new();
         loop {
             let trace = &traces[idx];
             let top_hash = trace.old_top_hash();
-
             let root_map = base.vals.entry(top_hash).or_insert_with(|| BTreeMap::new());
-
-            // if base.root != top_hash {
-            //     base = base.new_level(top_hash)
-            // }
             let hkey = trie_hash(trace.key())?;
-            root_map.insert(hkey, trace.key_range());
+            root_map.insert((prefix, hkey), trace.key_range());
 
             idx += 1;
             if idx >= traces.len() {
@@ -65,7 +68,6 @@ impl LevelMap {
             vals: BTreeMap::new(),
         }
     }
-
 
     // pub fn get_level(&self, root: &SH256) -> Option<&LevelMap> {
     //     let mut map = self;
@@ -135,6 +137,8 @@ impl FlattenedLeaf {
 impl MemStore {
     pub fn new() -> Self {
         Self {
+            codes: BTreeMap::new(),
+            prefix: u64::max_value(),
             nodes: BTreeMap::new(),
             index: LevelMap::new(),
             staging: BTreeMap::new(),
@@ -142,12 +146,98 @@ impl MemStore {
         }
     }
 
-    pub fn from_traces(traces: Vec<Trace>) -> Result<Self, Error> {
+    pub fn from_traces(traces: &[Trace]) -> Result<Self, Error> {
+        let prefix = u64::max_value();
         Ok(Self {
-            nodes: trace_nodes(&traces),
-            index: LevelMap::from_traces(&traces)?,
+            codes: BTreeMap::new(),
+            prefix,
+            nodes: trace_nodes(traces),
+            index: LevelMap::from_traces(prefix, traces)?,
             staging: BTreeMap::new(),
         })
+    }
+
+    pub fn with_prefix(&mut self, prefix: u64) -> MemStoreSlot {
+        MemStoreSlot { prefix, db: self }
+    }
+
+    pub fn add_codes(&mut self, codes: Vec<HexBytes>) {
+        for code in codes {
+            let hash = keccak_hash(&code);
+            self.codes.insert(hash.into(), Arc::new(code));
+        }
+    }
+
+    pub fn add_proof(
+        &mut self,
+        leaf_index: u64,
+        hkey: SH256,
+        value: Option<&[u8]>,
+        mut siblings: &[HexBytes],
+    ) -> Result<SH256, Error> {
+        // siblings:
+        //   root
+        //   subProof
+        //   leaf
+
+        let trie_path = utils::get_leaf_path(leaf_index);
+        assert_eq!(siblings.len(), trie_path.len());
+        let root = Node::new(NodeValue::parse_root(&siblings[0])?);
+
+        let mut out = Vec::new();
+        let leaf_value = &siblings[siblings.len() - 1];
+        siblings = &siblings[..siblings.len() - 1];
+        let mut leaf = Node::new(NodeValue::parse_leaf(
+            vec![trie_path[trie_path.len() - 1]].into(),
+            leaf_value.clone(),
+        ));
+        let mut leaf_hash = *leaf.hash();
+
+        let sibling_leaf_idx = siblings.len() - 1;
+        for (idx, sibling_bytes) in siblings.into_iter().enumerate().rev() {
+            if idx == 0 {
+                break;
+            }
+            let sibling = Node::new(if idx == sibling_leaf_idx {
+                NodeValue::parse_leaf(
+                    vec![trie_path[trie_path.len() - 1]].into(),
+                    sibling_bytes.clone(),
+                )
+            } else {
+                NodeValue::parse_branch(&sibling_bytes)?
+            });
+            let sibling_hash = *sibling.hash();
+            leaf = Node::raw_branch_auto(trie_path[idx], leaf_hash, sibling_hash);
+            leaf_hash = *leaf.hash();
+            out.push(sibling);
+            out.push(leaf);
+        }
+
+        if leaf_hash != root.raw().branch().unwrap().right {
+            return Err(Error::InvalidProof);
+        }
+        let root_hash = *root.hash();
+        out.push(root);
+
+        for node in out {
+            self.nodes.insert(*node.hash(), Arc::new(node));
+        }
+        self.index
+            .vals
+            .entry(root_hash)
+            .or_insert_with(|| BTreeMap::new())
+            .insert(
+                (self.prefix, hkey),
+                KeyRange {
+                    left_index: 0,
+                    center: Some(FlattenedLeaf {
+                        leaf_index,
+                        leaf_value: value.unwrap().into(),
+                    }),
+                    right_index: 0,
+                },
+            );
+        Ok(root_hash)
     }
 }
 
@@ -163,6 +253,10 @@ fn trace_nodes(traces: &[Trace]) -> BTreeMap<SH256, Arc<Node>> {
 
 impl Database for MemStore {
     type Node = Node;
+    fn get_code(&mut self, hash: &eth_types::SH256) -> Option<Arc<HexBytes>> {
+        self.codes.get(hash).cloned()
+    }
+    
     fn get_node(&self, key: &SH256) -> Result<Option<Arc<Self::Node>>, Error> {
         match EMPTY_TRIE_NODE.get(key) {
             Some(n) => return Ok(Some(n.clone())),
@@ -183,14 +277,14 @@ impl Database for MemStore {
 
     fn get_nearest_keys(&self, root: &SH256, k: &SH256) -> KeyRange {
         match self.index.vals.get(root) {
-            Some(map) => match map.get(k) {
+            Some(map) => match map.get(&(self.prefix, *k)) {
                 Some(r) => r.clone(),
                 None => {
                     dbg!(&map);
                     unreachable!("should exist: {:?}", k)
                 }
             },
-            None => unreachable!("{:?}", root),
+            None => unreachable!("unknown root: {:?}", root),
         }
     }
 

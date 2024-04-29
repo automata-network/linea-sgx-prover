@@ -7,12 +7,14 @@ edition = "2021"
 [features]
 default = ["std"]
 
-std = ["glog/std", "app/std", "base/std", "jsonrpc/std", "serde/std", "serde_json/std", "eth-tools/std", "statedb/std", "mpt/std", "evm-executor/std",  "eth_types/std",  "crypto/std", "linea/std", "solidity/std"]
-tstd = ["sgxlib/tstd", "glog/tstd", "app/tstd", "base/tstd", "jsonrpc/tstd", "serde/tstd", "serde_json/tstd", "eth-tools/tstd", "statedb/tstd", "mpt/tstd", "evm-executor/tstd", "eth_types/tstd", "crypto/tstd", "linea/tstd", "solidity/tstd"]
+std = ["glog/std", "app/std", "base/std", "jsonrpc/std", "serde/std", "serde_json/std", "eth-tools/std", "statedb/std", "mpt/std", "evm-executor/std",  "eth_types/std",  "crypto/std", "linea/std", "solidity/std", "shomei/std", "zktrie/std"]
+tstd = ["sgxlib/tstd", "glog/tstd", "app/tstd", "base/tstd", "jsonrpc/tstd", "serde/tstd", "serde_json/tstd", "eth-tools/tstd", "statedb/tstd", "mpt/tstd", "evm-executor/tstd", "eth_types/tstd", "crypto/tstd", "linea/tstd", "solidity/tstd", "shomei/tstd", "zktrie/tstd"]
 sgx = ["linea/sgx", "crypto/sgx"]
 
 [dependencies]
 app = { git = "https://github.com/automata-network/app-rs", default-features = false }
+shomei = { path = "../../common/shomei", default-features = false }
+zktrie = { path = "../../common/zktrie", default-features = false }
 sgxlib = { git = "https://github.com/automata-network/sgxlib", default-features = false }
 glog = { git = "https://github.com/automata-network/glog-rs", default-features = false }
 base = { git = "https://github.com/automata-network/base-rs", default-features = false }

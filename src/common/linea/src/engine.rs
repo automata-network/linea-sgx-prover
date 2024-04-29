@@ -1,12 +1,17 @@
 use std::prelude::v1::*;
 
 use eth_types::{
-    Block, BlockHeader, HexBytes, Receipt, Signer, TransactionInner, Withdrawal, SH160, SU256,
+    Block, BlockHeader, HexBytes, Receipt, Signer, StateAccount, TransactionInner, Withdrawal,
+    SH160, SH256, SU256,
 };
 use evm_executor::BlockHashGetter;
 use evm_executor::{ExecuteResult, PrecompileSet, TxContext};
+use rlp_derive::{RlpDecodable, RlpEncodable};
+use serde::{Deserialize, Serialize};
 use statedb::StateDB;
 use std::sync::Arc;
+
+use crate::CacheValueEnc;
 
 #[derive(Debug, Clone)]
 pub struct Linea {
@@ -151,5 +156,50 @@ impl evm_executor::Engine for Linea {
         withdrawals: Option<Vec<Self::Withdrawal>>,
     ) -> Result<Self::Block, String> {
         Ok(Block::new(header, txs, &receipts, withdrawals))
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct ZkStateAccount {
+    pub nonce: u64,
+    pub balance: SU256,
+    pub root: SH256,
+    pub mimc_code_hash: SH256,
+    pub keccak_code_hash: SH256,
+    pub code_size: SU256,
+}
+
+impl ZkStateAccount {
+    pub fn from_bytes(buf: &[u8]) -> ZkStateAccount {
+        let mut off = 0;
+        let nonce = SU256::from_big_endian(&buf[off..off + 32]);
+        off += 32;
+        let balance = SU256::from_big_endian(&buf[off..off + 32]);
+        off += 32;
+        let root = SH256::from_slice(&buf[off..off + 32]);
+        off += 32;
+        let mimc_code_hash = SH256::from_slice(&buf[off..off + 32]);
+        off += 32;
+        let keccak_code_hash = SH256::from_slice(&buf[off..off + 32]);
+        off += 32;
+        let code_size = SU256::from_big_endian(&buf[off..off + 32]);
+        ZkStateAccount {
+            nonce: nonce.as_u64(),
+            balance,
+            root,
+            mimc_code_hash,
+            keccak_code_hash,
+            code_size,
+        }
+    }
+}
+
+impl CacheValueEnc for ZkStateAccount {
+    fn decode(buf: &[u8]) -> Result<Self, String> {
+        Ok(ZkStateAccount::from_bytes(buf))
+    }
+
+    fn encode(&self) -> Vec<u8> {
+        unimplemented!()
     }
 }

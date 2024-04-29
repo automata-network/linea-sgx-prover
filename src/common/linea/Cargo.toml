@@ -8,8 +8,8 @@ license = "Apache-2.0"
 [features]
 default = ["std"]
 
-std = ["base/std", "eth_types/std", "glog/std", "eth-tools/std", "crypto/std", "statedb/std", "mpt/std", "evm-executor/std", "evm/std", "solidity/std"]
-tstd = ["base/tstd", "eth_types/tstd", "glog/tstd", "eth-tools/tstd", "crypto/tstd", "statedb/tstd", "mpt/tstd", "evm-executor/tstd", "evm/tstd", "solidity/tstd", "sgxlib-ra/tstd"]
+std = ["base/std", "eth_types/std", "glog/std", "eth-tools/std", "crypto/std", "statedb/std", "mpt/std", "evm-executor/std", "evm/std", "solidity/std", "zktrie/std", "serde/std"]
+tstd = ["base/tstd", "eth_types/tstd", "glog/tstd", "eth-tools/tstd", "crypto/tstd", "statedb/tstd", "mpt/tstd", "evm-executor/tstd", "evm/tstd", "solidity/tstd", "sgxlib-ra/tstd", "zktrie/tstd", "serde/tstd"]
 sgx = ["sgxlib-ra", "sgxlib-ra/sgx", "sgxlib-ra/dcap"]
 
 [dependencies]
@@ -25,7 +25,9 @@ evm-executor = { git = "https://github.com/automata-network/evm-executor-rs", de
 evm = { git = "https://github.com/automata-network/evm-rs", default-features = false }
 solidity = { git = "https://github.com/automata-network/solidity-rs", default-features = false }
 sgxlib-ra = { git = "https://github.com/automata-network/sgxlib-ra", default-features = false, optional = true }
+zktrie = { path = "../zktrie", default-features = false }
 scale-info-derive = "=2.10"
+serde = { git = "https://github.com/automata-network/sgxlib-thirdparty", default-features = false }
 
 lazy_static = { version = "1.4.0", default-features = false, features = ["spin_no_std"] }
 rlp = { version = "0.5", default-features = false }

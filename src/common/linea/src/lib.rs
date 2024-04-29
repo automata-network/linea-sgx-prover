@@ -17,3 +17,12 @@ pub use verifier::*;
 
 mod prover;
 pub use prover::*;
+
+mod zktrie_state;
+pub use zktrie_state::*;
+
+mod cache;
+pub use cache::*;
+
+mod trie;
+pub use trie::*;

@@ -1,17 +1,21 @@
 {
     "l2": "http://localhost:8545",
     "verifier": {
-        "endpoint": "http://localhost:18545",
+        "endpoint": "http://localhost:8545",
         "relay_account": "0x135e5f68224c169b016d92aedb6af6163e6d985dd6d25b3bbd1124e964490843",
         "contract": "0xB2712722E724C7a111eB9ED90F556f11a0038026"
     },
     "rollup": {
-        "endpoint": "http://localhost:18545",
+        "endpoint": "http://localhost:8545",
         "contract": "0x70BaD09280FD342D02fe64119779BC1f0791BAC2"
     },
     "server": {
         "tls": "",
         "body_limit": 2097152,
         "workers": 10
+    },
+    "shomei": {
+        "endpoint": "http://localhost:8888",
+        "version": "2.2.0-dev-955b4d81"
     }
 }
