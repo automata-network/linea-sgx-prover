@@ -20,16 +20,6 @@ pub trait CacheValueEnc: Sized {
     fn decode(buf: &[u8]) -> Result<Self, String>;
 }
 
-impl CacheValueEnc for mpt::StorageValue {
-    fn decode(buf: &[u8]) -> Result<Self, String> {
-        rlp::decode(buf).map_err(debug)
-    }
-
-    fn encode(&self) -> Vec<u8> {
-        rlp::encode(self).to_vec()
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct TrieCache<T, K, V>
 where
@@ -205,6 +195,13 @@ impl<'a, T, V, D> TrieCacheCtx<'a, T, V, D> {
             raw,
             dirty,
             db,
+        }
+    }
+
+    pub fn set<N: PartialEq>(&mut self, target: &mut N, val: N) {
+        if target != &val {
+            *target = val;
+            *self.dirty = true;
         }
     }
 }

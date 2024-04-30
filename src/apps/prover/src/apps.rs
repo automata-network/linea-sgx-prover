@@ -22,7 +22,7 @@ use shomei::RollupgetZkEVMStateMerkleProofV0Resp;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::Mutex;
-use zktrie::Trace;
+use zktrie::{PrefixDB, Trace};
 
 use crate::{Args, Config};
 
@@ -147,6 +147,10 @@ impl BuildContext {
             .fetch_proof_by_traces(&block_trace, current_block)
             .map_err(debug)?;
 
+        for item in block_trace {
+            glog::info!("traces: {:?}", item);
+        }
+
         let mut codes = Vec::new();
         for t in block_trace {
             if t.location().len() == 0 {
@@ -168,6 +172,7 @@ impl BuildContext {
             let hkey = account_key(&proof.account_proof.key);
             let root_hash = if let Some((leaf_index, proof)) = proof.account_proof.inclusion() {
                 db.add_proof(
+                    u64::max_value(),
                     leaf_index,
                     hkey,
                     proof.value.as_ref().map(|n| n.as_bytes()),
@@ -186,7 +191,11 @@ impl BuildContext {
         }
 
         let be = BlockExecutor::new(chain_id.into());
-        be.execute_v2(db, &block_trace, block)?;
+        be.execute_v2(
+            PrefixDB::new(u64::max_value(), db.into()),
+            &block_trace,
+            block,
+        )?;
         Ok(())
     }
 

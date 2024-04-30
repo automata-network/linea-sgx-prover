@@ -6,6 +6,7 @@ extern crate sgxlib as std;
 use std::prelude::v1::*;
 
 mod trie;
+use std::sync::Arc;
 use eth_types::{SH256, HexBytes};
 pub use trie::*;
 
@@ -33,10 +34,14 @@ pub enum Error {
     ReachedMaxLevel,
     PathNotAllow,
     InMemNextNodeNotFound,
+    NextFreeNodeNotFound,
+    NextFreeNodeEmptyValue(Arc<Node>),
     NodeNotFound(usize, SH256),
     ZKTrieKeyNotFound(HexBytes),
     ZkTrieParseNodeFail(HexBytes, &'static str),
     HashFail(String),
     InvalidBranchNode(HexBytes),
     InvalidProof,
+    RootNodeNotFound(SH256),
+    RootNodeExpectToBeBranchNode(Arc<Node>),
 }

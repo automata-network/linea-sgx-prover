@@ -1,11 +1,11 @@
-use core::convert::TryFrom;
 use std::prelude::v1::*;
 
-use eth_types::{HexBytes, SH256, SU256, SU64, U64};
+use core::convert::TryFrom;
+use eth_types::{HexBytes, SH256};
 use rlp_derive::RlpDecodable;
 use serde::Deserialize;
 
-use crate::{trie_hash, utils, FlattenedLeaf, KeyRange, LeafNode, LeafOpening, Node};
+use crate::{utils, FlattenedLeaf, KeyRange, LeafOpening, Node};
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(try_from = "RawTrace")]
@@ -97,20 +97,20 @@ impl Trace {
                 right_index: n.right_proof.leaf_index,
             },
             Self::Read(n) => KeyRange {
-                left_index: n.leaf.prev_leaf.as_u64(),
+                left_index: n.leaf.prev_leaf,
                 center: Some(FlattenedLeaf {
                     leaf_index: n.proof.leaf_index,
                     leaf_value: n.value.clone().into(),
                 }),
-                right_index: n.leaf.next_leaf.as_u64(),
+                right_index: n.leaf.next_leaf,
             },
             Self::Update(n) => KeyRange {
-                left_index: n.prior_updated_leaf.prev_leaf.as_u64(),
+                left_index: n.prior_updated_leaf.prev_leaf,
                 center: Some(FlattenedLeaf {
                     leaf_index: n.proof.leaf_index,
                     leaf_value: n.old_value.clone().into(),
                 }),
-                right_index: n.prior_updated_leaf.next_leaf.as_u64(),
+                right_index: n.prior_updated_leaf.next_leaf,
             },
             Self::Insertion(n) => KeyRange {
                 left_index: n.left_proof.leaf_index,
@@ -118,12 +118,12 @@ impl Trace {
                 right_index: n.right_proof.leaf_index,
             },
             Self::Deletion(n) => KeyRange {
-                left_index: n.prior_delete_leaf.prev_leaf.as_u64(),
+                left_index: n.prior_delete_leaf.prev_leaf,
                 center: Some(FlattenedLeaf {
                     leaf_index: n.delete_proof.leaf_index,
                     leaf_value: n.delete_value.clone().into(),
                 }),
-                right_index: n.prior_delete_leaf.next_leaf.as_u64(),
+                right_index: n.prior_delete_leaf.next_leaf,
             },
         }
     }

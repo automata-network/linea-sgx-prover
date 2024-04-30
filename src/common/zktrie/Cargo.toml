@@ -7,12 +7,13 @@ license = "Apache-2.0"
 
 [features]
 default = ["std"]
-std = ["serde/std", "mimc/std", "crypto/std", "eth_types/std", "serde_json/std", "glog/std"]
-tstd = ["sgxlib/tstd", "serde/tstd", "mimc/tstd", "crypto/tstd", "eth_types/tstd", "serde_json/tstd", "glog/tstd"]
+std = ["serde/std", "mimc/std", "crypto/std", "eth_types/std", "serde_json/std", "glog/std", "base/std"]
+tstd = ["sgxlib/tstd", "serde/tstd", "mimc/tstd", "crypto/tstd", "eth_types/tstd", "serde_json/tstd", "glog/tstd", "base/tstd"]
 
 [dependencies]
 sgxlib = { git = "https://github.com/automata-network/sgxlib", default-features = false }
 mimc = { path = "../mimc", default-features = false }
+base = { git = "https://github.com/automata-network/base-rs", default-features = false }
 crypto = { git = "https://github.com/automata-network/crypto-rs", default-features = false }
 glog = { git = "https://github.com/automata-network/glog-rs", default-features = false }
 eth_types = { git = "https://github.com/automata-network/eth-types-rs", default-features = false }

@@ -3,14 +3,14 @@ use std::prelude::v1::*;
 use base::format::debug;
 use core::fmt::Debug;
 use eth_types::{FetchStateResult, HexBytes, StateAccount, SH160, SH256, SU256};
-use mpt::StorageValue;
 use statedb::{Error, MissingState};
 use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;
+use std::ops::Deref;
 use std::sync::Arc;
 use zktrie::{Database, Node, Trace};
 
-use crate::{Trie, TrieCache, TrieCacheCtx, ZkStateAccount, ZkTrie};
+use crate::{StorageValue, Trie, TrieCache, TrieCacheCtx, ZkStateAccount, ZkTrie};
 
 pub fn account_key(acc: &[u8]) -> SH256 {
     let hash = zktrie::hash(acc);
@@ -28,7 +28,8 @@ pub struct ZkTrieState<D: Database<Node = Node>> {
 impl<D: Database<Node = Node>> ZkTrieState<D> {
     pub fn new_from_trace(db: D, t: &Trace) -> Self {
         let (next_free_node, sub_root) = t.old_state();
-        let acc_cache = TrieCache::new(ZkTrie::new(next_free_node, sub_root));
+        let root = Node::top_node(next_free_node, sub_root);
+        let acc_cache = TrieCache::new(ZkTrie::new(*root.hash()));
         let storages = BTreeMap::new();
         ZkTrieState {
             db,
@@ -54,17 +55,15 @@ impl<D: Database<Node = Node>> ZkTrieState<D> {
         let storage = match self.storages.entry(address.clone()) {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(n) => {
-                let new_trie = self
-                    .acc_cache
-                    .raw()
-                    .new_root(&self.db, root.into())
-                    .map_err(Error::WithKey)?;
+                let new_trie = self.acc_cache.raw().new_root(root.into());
                 n.insert(Box::new(TrieCache::new(new_trie)))
             }
         };
+        glog::info!("acc root_hash: {:?}, {:?}", root, storage.root_hash());
         if storage.root_hash() != root {
             storage.revert(root);
         }
+        // self.db.get_node(key)
         let out = storage
             .with_key(&mut self.db, index, f)
             .map_err(|err| Error::WithKey(err))?;
@@ -78,7 +77,11 @@ impl<D: Database<Node = Node>> ZkTrieState<D> {
 impl<D: Database<Node = Node>> statedb::StateDB for ZkTrieState<D> {
     type StateAccount = StateAccount;
     fn add_balance(&mut self, address: &SH160, val: &SU256) -> Result<(), Error> {
-        Ok(())
+        self.with_acc(address, |ctx| {
+            *ctx.dirty = true;
+            glog::info!("add_balance: addr={:?}, val={:?}, current={:?}", address, val, ctx.val.balance);
+            ctx.val.balance += val;
+        })
     }
 
     fn apply_states(&mut self, result: Vec<FetchStateResult>) -> Result<(), Error> {
@@ -94,11 +97,14 @@ impl<D: Database<Node = Node>> statedb::StateDB for ZkTrieState<D> {
     }
 
     fn exist(&mut self, address: &SH160) -> Result<bool, Error> {
-        unreachable!()
+        self.with_acc(address, |ctx| ctx.val.is_exist())
     }
 
     fn flush(&mut self) -> Result<SH256, Error> {
-        unreachable!()
+        if let Err(err) = self.acc_cache.flush(&mut self.db) {
+            glog::info!("nodes: {:?}", err);
+        }
+        Ok(self.acc_cache.root_hash())
     }
 
     fn fork(&self) -> Self {
@@ -114,6 +120,7 @@ impl<D: Database<Node = Node>> statedb::StateDB for ZkTrieState<D> {
     }
 
     fn get_code(&mut self, address: &SH160) -> Result<Arc<HexBytes>, Error> {
+        glog::info!("get code: {:?}", address);
         let (code_hash, code_size) =
             self.with_acc(address, |ctx| (ctx.val.keccak_code_hash, ctx.val.code_size))?;
         if code_size == 0 {
@@ -130,11 +137,14 @@ impl<D: Database<Node = Node>> statedb::StateDB for ZkTrieState<D> {
     }
 
     fn get_state(&mut self, address: &SH160, index: &SH256) -> Result<SH256, Error> {
-        glog::info!("get stat: {:?} {:?}", address, index);
-        self.with_storage(address, index, |ctx| {
-            glog::info!("ctx: {:?}", ctx.val);
-        });
-        unreachable!()
+        let value: SH256 = self
+            .with_storage(address, index, |ctx| {
+                glog::info!("storage value: {:?}", ctx.val);
+                ctx.val.0
+            })?
+            .into();
+        glog::info!("get state: {:?} {:?}: {:?}", address, index, value);
+        Ok(value)
     }
 
     fn revert(&mut self, root: SH256) {
@@ -150,7 +160,9 @@ impl<D: Database<Node = Node>> statedb::StateDB for ZkTrieState<D> {
     }
 
     fn set_nonce(&mut self, address: &SH160, val: SU256) -> Result<(), Error> {
-        unreachable!()
+        self.with_acc(address, |mut ctx| {
+            ctx.val.set_nonce(ctx.dirty, val.as_u64())
+        })
     }
 
     fn set_state(&mut self, address: &SH160, index: &SH256, value: SH256) -> Result<(), Error> {
@@ -162,8 +174,11 @@ impl<D: Database<Node = Node>> statedb::StateDB for ZkTrieState<D> {
     }
 
     fn sub_balance(&mut self, address: &SH160, val: &SU256) -> Result<(), Error> {
+        // 1997180186000000000 // before
+        // 1984180190000000000
         self.with_acc(address, |ctx| {
             *ctx.dirty = true;
+            glog::info!("sub_balance: addr={:?}, val={:?}, current={:?}", address, val, ctx.val.balance);
             ctx.val.balance -= val;
         })
     }

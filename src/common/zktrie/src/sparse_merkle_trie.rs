@@ -1,7 +1,7 @@
-use std::{io::Write, prelude::v1::*};
+use std::prelude::v1::*;
 
-use crate::{prefix_len, utils, Error, FlattenedLeaf, HashOrNode, KeyRange, Node, NodeValue};
-use eth_types::{HexBytes, SH160, SH256};
+use crate::{prefix_len, utils, Error, FlattenedLeaf, KeyRange, Node, NodeValue};
+use eth_types::{HexBytes, SH256};
 use std::sync::Arc;
 
 pub const ZK_TRIE_DEPTH: usize = 40;
@@ -22,81 +22,63 @@ pub struct NodeData {
 
 #[derive(Debug)]
 pub struct SpareMerkleTrie {
-    root: SH256,
+    root_hash: SH256,
 }
 
 impl SpareMerkleTrie {
     pub fn new(root_hash: SH256) -> Self {
-
-        Ok(Self { root })
+        Self { root_hash }
     }
 
-    pub fn new_from_sub_root(next_free_node: u64, sub_root: SH256) -> Self {
-        Self {
-            root: Arc::new(Node::top_node(next_free_node, sub_root)),
-        }
-    }
+    // pub fn new_from_sub_root(next_free_node: u64, sub_root: SH256) -> Self {
+    //     Self {
+    //         root: Arc::new(Node::top_node(next_free_node, sub_root)),
+    //     }
+    // }
 
     pub fn root_hash(&self) -> &SH256 {
-        self.root.hash()
+        &self.root_hash
     }
 
-    pub fn sub_root_hash(&self) -> &SH256 {
-        let branch_node = self.root.raw().branch().unwrap();
-        &branch_node.right
+    pub fn root_node<D: Database<Node = Node>>(&self, db: &D) -> Result<Arc<Node>, Error> {
+        let node = db
+            .get_node(&self.root_hash)?
+            .ok_or_else(|| Error::RootNodeNotFound(self.root_hash))?;
+        Ok(node)
     }
 
-    pub fn next_free_node(&self) -> Option<u64> {
-        let branch_node = self.root.raw().branch()?;
-        match &branch_node.left {
-            HashOrNode::Node(n) => n.value().map(utils::parse_node_index),
-            _ => None,
-        }
+    pub fn sub_root_hash<D: Database<Node = Node>>(&self, db: &D) -> Result<SH256, Error> {
+        let root_node = self.root_node(db)?;
+        let branch_node = root_node
+            .raw()
+            .branch()
+            .ok_or_else(|| Error::RootNodeExpectToBeBranchNode(root_node.clone()))?;
+        Ok(branch_node.right)
     }
 
-    pub fn set_next_free_node(&mut self, free: u64) -> Result<(), Error> {
-        let branch_node = self.root.raw().branch().unwrap();
-        self.root = Arc::new(
-            branch_node
-                .new_replace(0, &Arc::new(Node::next_free_node(free)))
-                .into(),
-        );
-        Ok(())
+    pub fn next_free_node<D: Database<Node = Node>>(&self, db: &D) -> Result<u64, Error> {
+        let root_node = self.root_node(db)?;
+        let branch_node = root_node
+            .raw()
+            .branch()
+            .ok_or_else(|| Error::RootNodeExpectToBeBranchNode(root_node.clone()))?;
+        let next_free_node = utils::parse_node_index(branch_node.left.as_bytes());
+        Ok(next_free_node)
     }
 
-    pub fn root_node<D: Database<Node = Node>>(&self, db: &D) -> Result<Option<Arc<Node>>, Error> {
-        db.get_node(self.root.hash())
-    }
-
-    pub fn write_to<D: Database<Node = Node>>(&self, db: &D, f: &mut impl Write) {
-        Self::print(db, self.root.hash(), 0, f).unwrap()
-    }
-
-    fn print<D: Database<Node = Node>>(
-        db: &D,
-        root: &SH256,
-        lvl: usize,
-        f: &mut impl Write,
-    ) -> std::io::Result<()> {
-        let node = db.get_node(root).unwrap().unwrap();
-        if node.is_empty_node() {
-            return writeln!(f, "{}{}(empty)", " ".repeat(lvl), node.raw().ty());
-        }
-        writeln!(
-            f,
-            "{}{}({:?}) = {:?}",
-            "|".repeat(lvl) + "-",
-            node.raw().ty(),
-            node.hash(),
-            node.value(),
-        )?;
-        match node.raw() {
-            NodeValue::Branch(n) => {
-                Self::print(db, n.left_hash(), lvl + 1, f)?;
-                Self::print(db, &n.right, lvl + 1, f)?;
-            }
-            _ => (),
-        }
+    pub fn set_next_free_node<D: Database<Node = Node>>(
+        &mut self,
+        db: &mut D,
+        free: u64,
+    ) -> Result<(), Error> {
+        let root_node = self.root_node(db)?;
+        let branch_node = root_node
+            .raw()
+            .branch()
+            .ok_or_else(|| Error::RootNodeExpectToBeBranchNode(root_node.clone()))?;
+        let root = Node::top_node(free, branch_node.right);
+        let root = db.update_node(*root.hash(), root)?;
+        self.root_hash = *root.hash();
         Ok(())
     }
 
@@ -108,7 +90,8 @@ impl SpareMerkleTrie {
         path: &[u8],
         value: Vec<u8>,
     ) -> Result<(), Error> {
-        self.root = self.add_leaf(db, 0, (&self.root).into(), path, value)?;
+        let root = self.add_leaf(db, 0, &self.root_hash, path, value)?;
+        self.root_hash = *root.hash();
         Ok(())
     }
 
@@ -117,7 +100,9 @@ impl SpareMerkleTrie {
         db: &mut D,
         path: &[u8],
     ) -> Result<(), Error> {
-        self.root = self.remove_leaf(db, 0, (&self.root).into(), path)?;
+        let root_hash = self.root_hash;
+        let root = self.remove_leaf(db, 0, &root_hash, path)?;
+        self.root_hash = *root.hash();
         Ok(())
     }
 
@@ -125,21 +110,24 @@ impl SpareMerkleTrie {
         &mut self,
         db: &mut D,
         lvl: usize,
-        current: HashOrNode,
+        current: &SH256,
         path: &[u8],
     ) -> Result<Arc<Node>, Error> {
         if lvl >= ZK_TRIE_DEPTH + 2 {
             return Err(Error::ReachedMaxLevel);
         }
-        let n = match current.expand(db)? {
+        let n = match db.get_node(current)? {
             Some(n) => n,
-            None => return Err(Error::NodeNotFound(lvl, *current.hash())),
+            None => return Err(Error::NodeNotFound(lvl, *current)),
         };
         Ok(match n.raw() {
             NodeValue::Branch(branch) => {
                 let child = branch.child(path[lvl]).into();
                 let updated_child = self.remove_leaf(db, lvl + 1, child, path)?;
-                self.db_add(db, branch.new_replace(path[lvl], &updated_child).into())?
+                self.db_add(
+                    db,
+                    branch.new_replace(path[lvl], *updated_child.hash()).into(),
+                )?
             }
             NodeValue::Leaf(leaf) => Node::empty_leaf(),
             NodeValue::EmptyLeaf => Node::empty_leaf(),
@@ -151,28 +139,32 @@ impl SpareMerkleTrie {
         &self,
         db: &mut D,
         lvl: usize,
-        current: HashOrNode,
+        current: &SH256,
         path: &[u8],
         value: Vec<u8>,
     ) -> Result<Arc<Node>, Error> {
         if lvl >= ZK_TRIE_DEPTH + 2 {
             return Err(Error::ReachedMaxLevel);
         }
-        let n = match current.expand(db)? {
+        let n = match db.get_node(current)? {
             Some(n) => n,
-            None => return Err(Error::NodeNotFound(lvl, *current.hash())),
+            None => return Err(Error::NodeNotFound(lvl, *current)),
         };
         Ok(match n.raw() {
             NodeValue::Branch(branch) => {
                 let child = branch.child(path[lvl]).into();
                 let updated_child = self.add_leaf(db, lvl + 1, child, path, value)?;
-                self.db_add(db, branch.new_replace(path[lvl], &updated_child).into())?
+                self.db_add(
+                    db,
+                    branch.new_replace(path[lvl], *updated_child.hash()).into(),
+                )?
             }
             NodeValue::Leaf(leaf) => {
                 let common_path_len = prefix_len(&leaf.path, &path[lvl..]);
                 if common_path_len == leaf.path.len() {
                     self.db_add(db, Node::leaf(path[lvl..].to_vec(), value))?
                 } else {
+                    glog::info!("leaf.path: {:?}, path:{:?}", &leaf.path, &path[lvl..]);
                     return Err(Error::PathNotAllow);
                 }
             }
@@ -197,19 +189,20 @@ impl SpareMerkleTrie {
         db: &D,
         path: &[u8],
     ) -> Result<Option<Arc<Node>>, Error> {
-        let mut next_node = HashOrNode::Node(self.root.clone());
+        // let mut next_node = HashOrNode::Node(self.root.clone());
+        let mut next_node_hash = self.root_hash;
         for i in 0..(ZK_TRIE_DEPTH + 2) {
-            let n = match next_node.expand(db)? {
-                Some(n) => n,
-                None => return Err(Error::NodeNotFound(i, *next_node.hash())),
+            let n = match db.get_node(&next_node_hash)? {
+                Some(node) => node,
+                None => return Err(Error::NodeNotFound(i, next_node_hash)),
             };
 
             match n.raw() {
                 NodeValue::Branch(node) => {
                     if path[i] == 0 {
-                        next_node = node.left_hash().into();
+                        next_node_hash = node.left;
                     } else {
-                        next_node = node.right.into();
+                        next_node_hash = node.right;
                     }
                 }
                 NodeValue::EmptyLeaf => return Ok(None),

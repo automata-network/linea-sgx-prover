@@ -14,14 +14,14 @@ lazy_static::lazy_static! {
     pub static ref LEAF_OPENING_HEAD: LeafOpening = LeafOpening {
         hkey: SH256::default(),
         hval: SH256::default(),
-        prev_leaf: 0.into(),
-        next_leaf: 1.into(),
+        prev_leaf: 0,
+        next_leaf: 1,
     };
     pub static ref LEAF_OPENING_TAIL: LeafOpening = LeafOpening {
         hkey: "0x12ab655e9a2ca55660b44d1e5c37b00159aa76fed00000010a11800000000000".into(),
         hval: SH256::default(),
-        prev_leaf: 0.into(),
-        next_leaf: 1.into(),
+        prev_leaf: 0,
+        next_leaf: 1,
     };
     pub static ref EMPTY_TRIE_NODE: BTreeMap<SH256, Arc<Node>> = {
         let (_, n) = init_world_state();
@@ -37,7 +37,7 @@ pub enum LeafType {
     Empty = 0x18,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Node {
     raw: NodeValue,
     hash: SH256,
@@ -73,8 +73,9 @@ impl std::fmt::Display for NodeValue {
 
 impl Node {
     pub fn top_node(next_free_node: u64, sub_root: SH256) -> Node {
-        let left = Arc::new(Node::next_free_node(next_free_node));
-        Node::branch(&left, sub_root)
+        let next_free_node = SU256::from(next_free_node);
+        // let left = Arc::new(Node::next_free_node(next_free_node));
+        Node::branch(next_free_node.into(), sub_root)
     }
 
     pub fn raw_branch_auto(path: u8, leaf: SH256, sibling: SH256) -> Node {
@@ -92,11 +93,8 @@ impl Node {
         }))
     }
 
-    pub fn branch(left: &Arc<Node>, right: SH256) -> Node {
-        Self::new(NodeValue::Branch(BranchNode {
-            right,
-            left: HashOrNode::wrap_branch_child(left),
-        }))
+    pub fn branch(left: SH256, right: SH256) -> Node {
+        Self::new(NodeValue::Branch(BranchNode { right, left }))
     }
 
     pub fn leaf(path: Vec<u8>, value: Vec<u8>) -> Node {
@@ -160,16 +158,16 @@ pub fn init_world_state() -> (Arc<Node>, BTreeMap<SH256, Arc<Node>>) {
     let mut node = Node::empty_leaf();
     empty_nodes.insert(*node.hash(), node.clone());
     for i in 0..ZK_TRIE_DEPTH {
-        node = Arc::new(Node::branch(&node, *node.hash()));
+        node = Arc::new(Node::branch(node.hash, *node.hash()));
         empty_nodes.insert(*node.hash(), node.clone());
     }
-    node = Arc::new(Node::branch(&Node::empty_leaf(), *node.hash()));
+    node = Arc::new(Node::branch(SH256::default(), *node.hash()));
     empty_nodes.insert(*node.hash(), node.clone());
 
     (node, empty_nodes)
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum NodeValue {
     Branch(BranchNode),
     Leaf(LeafNode),
@@ -216,7 +214,7 @@ impl NodeValue {
     pub fn value(&self) -> Option<&[u8]> {
         match self {
             NodeValue::Branch(_) => None,
-            NodeValue::EmptyLeaf => None,
+            NodeValue::EmptyLeaf => Some(&[]),
             NodeValue::NextFree(node) => Some(&node.value),
             NodeValue::Leaf(node) => Some(&node.value),
         }
@@ -237,11 +235,7 @@ impl NodeValue {
             return Err(Error::InvalidBranchNode(buf.to_vec().into()));
         }
         Ok(NodeValue::Branch(BranchNode {
-            left: Arc::new(Node::new(Self::parse_leaf(
-                HexBytes::new(),
-                buf[..32].into(),
-            )))
-            .into(),
+            left: SH256::from_slice(&buf[..32]),
             right: SH256::from_slice(&buf[32..]),
         }))
     }
@@ -259,10 +253,7 @@ impl NodeValue {
     pub fn write_to(&self, out: &mut Vec<u8>) {
         match self {
             NodeValue::Branch(node) => {
-                match &node.left {
-                    HashOrNode::Hash(hash) => out.extend(&hash.0[..]),
-                    HashOrNode::Node(n) => n.raw.write_to(out),
-                }
+                out.extend(&node.left.0[..]);
                 out.extend(&node.right.0[..]);
             }
             NodeValue::Leaf(node) => out.extend(node.value.as_slice()),
@@ -272,13 +263,13 @@ impl NodeValue {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct BranchNode {
-    pub left: HashOrNode,
+    pub left: SH256,
     pub right: SH256,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum HashOrNode {
     Node(Arc<Node>),
     Hash(SH256),
@@ -336,16 +327,9 @@ impl HashOrNode {
 }
 
 impl BranchNode {
-    pub fn left_hash(&self) -> &SH256 {
-        match &self.left {
-            HashOrNode::Hash(h) => h,
-            HashOrNode::Node(n) => n.hash(),
-        }
-    }
-
     pub fn child(&self, idx: u8) -> &SH256 {
         if idx == 0 {
-            self.left.hash()
+            &self.left
         } else if idx == 1 {
             &self.right
         } else {
@@ -353,17 +337,10 @@ impl BranchNode {
         }
     }
 
-    pub fn new_replace(&self, idx: u8, n: &Arc<Node>) -> Self {
-        let left = if idx == 0 {
-            HashOrNode::wrap_branch_child(n)
-        } else {
-            self.left.clone()
-        };
-        let right = if idx == 1 { n.hash() } else { &self.right };
-        Self {
-            left,
-            right: *right,
-        }
+    pub fn new_replace(&self, idx: u8, n: SH256) -> Self {
+        let left = if idx == 0 { n } else { self.left };
+        let right = if idx == 1 { n } else { self.right };
+        Self { left, right }
     }
 }
 
@@ -373,7 +350,7 @@ impl From<BranchNode> for Node {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct LeafNode {
     // pub location: Vec<u8>,
     pub path: HexBytes,
@@ -381,11 +358,13 @@ pub struct LeafNode {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct LeafOpening {
     pub hkey: SH256,
     pub hval: SH256,
-    pub prev_leaf: SU256,
-    pub next_leaf: SU256,
+    pub prev_leaf: u64,
+    pub next_leaf: u64,
 }
 
 impl rlp::Decodable for LeafOpening {
@@ -421,8 +400,8 @@ impl LeafOpening {
         Self {
             hkey,
             hval,
-            prev_leaf,
-            next_leaf,
+            prev_leaf: prev_leaf.as_u64(),
+            next_leaf: prev_leaf.as_u64(),
         }
     }
 
@@ -432,22 +411,28 @@ impl LeafOpening {
         new
     }
 
-    pub fn new_next_leaf(&self, next_leaf: SU256) -> Self {
+    pub fn new_next_leaf(&self, next_leaf: u64) -> Self {
         let mut new = self.clone();
         new.next_leaf = next_leaf;
         new
     }
 
-    pub fn new_prev_leaf(&self, prev_leaf: SU256) -> Self {
+    pub fn new_prev_leaf(&self, prev_leaf: u64) -> Self {
         let mut new = self.clone();
         new.prev_leaf = prev_leaf;
         new
     }
 
     pub fn to_bytes(&self) -> Vec<u8> {
+        let mut tmp = SU256::default();
         let mut out = vec![0_u8; 96 + 32];
-        self.prev_leaf.to_big_endian(&mut out[..32]);
-        self.next_leaf.to_big_endian(&mut out[32..64]);
+
+        tmp = self.prev_leaf.into();
+        tmp.to_big_endian(&mut out[..32]);
+        
+        tmp = self.next_leaf.into();
+        tmp.to_big_endian(&mut out[32..64]);
+
         out[64..96].copy_from_slice(&self.hkey.0);
         out[96..].copy_from_slice(&self.hval.0);
         out

@@ -1,6 +1,5 @@
 use std::prelude::v1::*;
 
-use eth_types::SU256;
 use ff::*;
 
 pub const BYTES: usize = 32;

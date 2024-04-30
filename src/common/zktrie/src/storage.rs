@@ -7,16 +7,87 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::{
-    trie_hash, utils, Database, Error, LeafOpening, Node, NodeValue, Trace, TraceProof,
-    EMPTY_TRIE_NODE, ZK_TRIE_DEPTH,
+    trie_hash, utils, Database, Error, LeafOpening, Node, NodeValue, Trace, EMPTY_TRIE_NODE,
+    ZK_TRIE_DEPTH,
 };
+
+pub struct PrefixDB<'a> {
+    prefix: u64,
+    raw: RawDB<'a, MemStore>,
+}
+
+impl<'a> PrefixDB<'a> {
+    pub fn new(prefix: u64, raw: RawDB<'a, MemStore>) -> Self {
+        Self { prefix, raw }
+    }
+}
+
+pub enum RawDB<'a, D> {
+    Borrowed(&'a mut D),
+    Owned(D),
+}
+
+impl<'a, D> From<D> for RawDB<'a, D> {
+    fn from(db: D) -> Self {
+        RawDB::Owned(db)
+    }
+}
+
+impl<'a, D> From<&'a mut D> for RawDB<'a, D> {
+    fn from(db: &'a mut D) -> Self {
+        RawDB::Borrowed(db)
+    }
+}
+
+impl<'a, D> std::ops::Deref for RawDB<'a, D> {
+    type Target = D;
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Borrowed(n) => n,
+            Self::Owned(n) => &n,
+        }
+    }
+}
+
+impl<'a, D> std::ops::DerefMut for RawDB<'a, D> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        match self {
+            Self::Borrowed(n) => n,
+            Self::Owned(n) => n,
+        }
+    }
+}
+
+impl<'a> Database for PrefixDB<'a> {
+    type Node = Node;
+    fn get_code(&mut self, hash: &SH256) -> Option<Arc<HexBytes>> {
+        self.raw.get_code(hash)
+    }
+
+    fn get_nearest_keys(&self, root: &SH256, k: &SH256) -> KeyRange {
+        self.raw.get_nearest_keys(self.prefix, root, k)
+    }
+
+    fn get_node(&self, key: &SH256) -> Result<Option<Arc<Self::Node>>, Error> {
+        self.raw.get_node(key)
+    }
+
+    fn remove_index(&mut self, k: &SH256) {
+        self.raw.remove_index(k)
+    }
+
+    fn update_index(&mut self, k: SH256, v: FlattenedLeaf) {
+        self.raw.update_index(k, v)
+    }
+
+    fn update_node(&mut self, key: SH256, node: Self::Node) -> Result<Arc<Self::Node>, Error> {
+        self.raw.update_node(key, node)
+    }
+}
 
 #[derive(Debug)]
 pub struct MemStore {
-    prefix: u64,
     nodes: BTreeMap<SH256, Arc<Node>>,
-    // index: BTreeMap<SH256, FlattenedLeaf>,
-    // traces: BTreeMap<SH256, Vec<Trace>>,
     index: LevelMap,
     staging: BTreeMap<SH256, FlattenedLeaf>,
     codes: BTreeMap<SH256, Arc<HexBytes>>,
@@ -34,21 +105,12 @@ pub struct LevelMap {
     vals: BTreeMap<SH256, BTreeMap<(u64, SH256), KeyRange>>,
 }
 
-// fn to_range(p: &TraceProof, l: &LeafOpening) -> (SH256, FlattenedLeaf) {
-//     (
-//         l.hkey,
-//         FlattenedLeaf {
-//             leaf_index: p.leaf_index,
-//             leaf_value: l.hval.0.to_vec(),
-//         },
-//     )
-// }
-
 impl LevelMap {
-    pub fn from_traces(prefix: u64, traces: &[Trace]) -> Result<Self, Error> {
+    pub fn from_traces(traces: &[Trace]) -> Result<Self, Error> {
         let mut idx = 0;
         let mut base = LevelMap::new();
         loop {
+            let prefix = u64::max_value();
             let trace = &traces[idx];
             let top_hash = trace.old_top_hash();
             let root_map = base.vals.entry(top_hash).or_insert_with(|| BTreeMap::new());
@@ -60,6 +122,15 @@ impl LevelMap {
                 break;
             }
         }
+        for (item, key) in &base.vals {
+            glog::info!("{}", "=".repeat(30));
+            glog::info!("key: {:?} => {:?}", item, key.keys());
+            for t in traces {
+                if &t.old_top_hash() == item {
+                    glog::info!("key={:?}, trace={:?}", trie_hash(t.key()).unwrap(), t);
+                }
+            }
+        }
         Ok(base)
     }
 
@@ -68,33 +139,7 @@ impl LevelMap {
             vals: BTreeMap::new(),
         }
     }
-
-    // pub fn get_level(&self, root: &SH256) -> Option<&LevelMap> {
-    //     let mut map = self;
-    //     loop {
-    //         if &map.root == root {
-    //             return Some(map);
-    //         }
-    //         map = match &map.down {
-    //             Some(n) => &n,
-    //             None => return None,
-    //         }
-    //     }
-    // }
 }
-
-// impl std::ops::Deref for LevelMap {
-//     type Target = BTreeMap<SH256, KeyRange>;
-//     fn deref(&self) -> &Self::Target {
-//         &self.vals
-//     }
-// }
-
-// impl std::ops::DerefMut for LevelMap {
-//     fn deref_mut(&mut self) -> &mut Self::Target {
-//         &mut self.vals
-//     }
-// }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FlattenedLeaf {
@@ -138,27 +183,19 @@ impl MemStore {
     pub fn new() -> Self {
         Self {
             codes: BTreeMap::new(),
-            prefix: u64::max_value(),
             nodes: BTreeMap::new(),
             index: LevelMap::new(),
             staging: BTreeMap::new(),
-            // traces: BTreeMap::new(),
         }
     }
 
     pub fn from_traces(traces: &[Trace]) -> Result<Self, Error> {
-        let prefix = u64::max_value();
         Ok(Self {
             codes: BTreeMap::new(),
-            prefix,
             nodes: trace_nodes(traces),
-            index: LevelMap::from_traces(prefix, traces)?,
+            index: LevelMap::from_traces(traces)?,
             staging: BTreeMap::new(),
         })
-    }
-
-    pub fn with_prefix(&mut self, prefix: u64) -> MemStoreSlot {
-        MemStoreSlot { prefix, db: self }
     }
 
     pub fn add_codes(&mut self, codes: Vec<HexBytes>) {
@@ -170,6 +207,7 @@ impl MemStore {
 
     pub fn add_proof(
         &mut self,
+        prefix: u64,
         leaf_index: u64,
         hkey: SH256,
         value: Option<&[u8]>,
@@ -226,38 +264,23 @@ impl MemStore {
             .vals
             .entry(root_hash)
             .or_insert_with(|| BTreeMap::new())
-            .insert(
-                (self.prefix, hkey),
-                KeyRange {
-                    left_index: 0,
-                    center: Some(FlattenedLeaf {
-                        leaf_index,
-                        leaf_value: value.unwrap().into(),
-                    }),
-                    right_index: 0,
-                },
-            );
+            .entry((prefix, hkey))
+            .or_insert_with(|| KeyRange {
+                left_index: 0,
+                center: Some(FlattenedLeaf {
+                    leaf_index,
+                    leaf_value: value.unwrap().into(),
+                }),
+                right_index: 0,
+            });
         Ok(root_hash)
     }
-}
 
-fn trace_nodes(traces: &[Trace]) -> BTreeMap<SH256, Arc<Node>> {
-    let mut n = BTreeMap::new();
-    for trace in traces {
-        for node in trace.nodes() {
-            n.insert(*node.hash(), Arc::new(node));
-        }
-    }
-    n
-}
-
-impl Database for MemStore {
-    type Node = Node;
     fn get_code(&mut self, hash: &eth_types::SH256) -> Option<Arc<HexBytes>> {
         self.codes.get(hash).cloned()
     }
-    
-    fn get_node(&self, key: &SH256) -> Result<Option<Arc<Self::Node>>, Error> {
+
+    fn get_node(&self, key: &SH256) -> Result<Option<Arc<Node>>, Error> {
         match EMPTY_TRIE_NODE.get(key) {
             Some(n) => return Ok(Some(n.clone())),
             None => {}
@@ -265,7 +288,7 @@ impl Database for MemStore {
         Ok(self.nodes.get(key).map(|n| n.clone()))
     }
 
-    fn update_node(&mut self, key: SH256, node: Self::Node) -> Result<Arc<Self::Node>, Error> {
+    fn update_node(&mut self, key: SH256, node: Node) -> Result<Arc<Node>, Error> {
         let node = Arc::new(node);
         self.nodes.insert(key, node.clone());
         Ok(node)
@@ -275,13 +298,13 @@ impl Database for MemStore {
         self.staging.insert(k, v);
     }
 
-    fn get_nearest_keys(&self, root: &SH256, k: &SH256) -> KeyRange {
+    fn get_nearest_keys(&self, prefix: u64, root: &SH256, k: &SH256) -> KeyRange {
         match self.index.vals.get(root) {
-            Some(map) => match map.get(&(self.prefix, *k)) {
+            Some(map) => match map.get(&(prefix, *k)) {
                 Some(r) => r.clone(),
                 None => {
                     dbg!(&map);
-                    unreachable!("should exist: {:?}", k)
+                    unreachable!("index not found at root({:?}): key={:?}", root, (prefix, k))
                 }
             },
             None => unreachable!("unknown root: {:?}", root),
@@ -291,6 +314,21 @@ impl Database for MemStore {
     fn remove_index(&mut self, k: &SH256) {
         self.staging.remove(k);
     }
+}
+
+fn trace_nodes(traces: &[Trace]) -> BTreeMap<SH256, Arc<Node>> {
+    let mut n = BTreeMap::new();
+    for trace in traces {
+        let (next_free_node, sub_root) = trace.old_state();
+        let next_free_node = Node::next_free_node(next_free_node);
+        let root = Node::raw_branch(*next_free_node.hash(), sub_root);
+        n.insert(*root.hash(), Arc::new(root));
+        n.insert(*next_free_node.hash(), Arc::new(next_free_node));
+        for node in trace.nodes() {
+            n.insert(*node.hash(), Arc::new(node));
+        }
+    }
+    n
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -307,57 +345,6 @@ impl KeyRange {
     pub fn right_path(&self) -> [u8; ZK_TRIE_DEPTH + 2] {
         utils::get_leaf_path(self.right_index)
     }
-    // pub fn search_with_default<F: FnOnce() -> (K, V)>(
-    //     map: &BTreeMap<SH256, FlattenedLeaf>,
-    //     key: &K,
-    //     default: F,
-    // ) -> Self {
-    //     match Self::search(map, key) {
-    //         Some(n) => n,
-    //         None => {
-    //             let default = default();
-    //             Range {
-    //                 left: default.clone(),
-    //                 center: None,
-    //                 right: default.clone(),
-    //             }
-    //         }
-    //     }
-    // }
-
-    // pub fn search(map: &BTreeMap<K, V>, key: &K) -> Option<Self> {
-    //     if map.len() == 0 {
-    //         return None;
-    //     }
-    //     let mut lower_range = map.range(..key);
-    //     let mut upper_range = map.range(key..);
-    //     let mut center = None;
-    //     let mut left = lower_range.next_back();
-    //     let mut right = upper_range.next();
-    //     if let Some((k, v)) = right {
-    //         if k == key {
-    //             center = Some((k.clone(), v.clone()));
-    //             right = upper_range.next();
-    //         }
-    //     }
-    //     let left = left
-    //         .map(|(k, v)| (k.clone(), v.clone()))
-    //         .unwrap_or_else(|| {
-    //             let (k, v) = map.iter().next().unwrap();
-    //             (k.clone(), v.clone())
-    //         });
-    //     let right = right
-    //         .map(|(k, v)| (k.clone(), v.clone()))
-    //         .unwrap_or_else(|| {
-    //             let (k, v) = map.iter().next_back().unwrap();
-    //             (k.clone(), v.clone())
-    //         });
-    //     Some(Self {
-    //         left,
-    //         center,
-    //         right,
-    //     })
-    // }
 }
 
 #[cfg(test)]

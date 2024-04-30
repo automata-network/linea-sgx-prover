@@ -1,5 +1,7 @@
 use std::prelude::v1::*;
 
+use base::format::debug;
+use crypto::keccak_hash;
 use eth_types::{
     Block, BlockHeader, HexBytes, Receipt, Signer, StateAccount, TransactionInner, Withdrawal,
     SH160, SH256, SU256,
@@ -159,7 +161,7 @@ impl evm_executor::Engine for Linea {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct ZkStateAccount {
     pub nonce: u64,
     pub balance: SU256,
@@ -169,8 +171,55 @@ pub struct ZkStateAccount {
     pub code_size: SU256,
 }
 
+impl Default for ZkStateAccount {
+    fn default() -> Self {
+        ZkStateAccount {
+            nonce: 0,
+            balance: 0.into(),
+            root: SH256::default(),
+            mimc_code_hash: *zktrie::EMPTY_MIMC_CODE_HASH,
+            keccak_code_hash: *zktrie::EMPTY_KECCAK_CODE_HASH,
+            code_size: 0.into(),
+        }
+    }
+}
+
 impl ZkStateAccount {
+    pub fn is_exist(&self) -> bool {
+        self == &Self::default()
+    }
+
+    pub fn set_nonce(&mut self, dirty: &mut bool, val: u64) {
+        if self.nonce != val {
+            self.nonce = val;
+            *dirty = true;
+        }
+    }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        if self == &Self::default() {
+            return Vec::new();
+        }
+        let mut buf = vec![0_u8; 192];
+        let nonce: SU256 = self.nonce.into();
+        nonce.to_big_endian(&mut buf[..32]);
+        let mut off = 32;
+        self.balance.to_big_endian(&mut buf[off..off + 32]);
+        off += 32;
+        &mut buf[off..off + 32].copy_from_slice(self.root.as_bytes());
+        off += 32;
+        &mut buf[off..off + 32].copy_from_slice(self.mimc_code_hash.as_bytes());
+        off += 32;
+        &mut buf[off..off + 32].copy_from_slice(self.keccak_code_hash.as_bytes());
+        off += 32;
+        self.code_size.to_big_endian(&mut buf[off..off + 32]);
+        buf
+    }
+
     pub fn from_bytes(buf: &[u8]) -> ZkStateAccount {
+        if buf.len() == 0 {
+            return ZkStateAccount::default();
+        }
         let mut off = 0;
         let nonce = SU256::from_big_endian(&buf[off..off + 32]);
         off += 32;
@@ -200,6 +249,50 @@ impl CacheValueEnc for ZkStateAccount {
     }
 
     fn encode(&self) -> Vec<u8> {
-        unimplemented!()
+        self.to_bytes()
+    }
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct StorageValue(pub SH256);
+
+impl std::ops::Deref for StorageValue {
+    type Target = SH256;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl rlp::Encodable for StorageValue {
+    fn rlp_append(&self, s: &mut rlp::RlpStream) {
+        let idx = self.0.as_bytes().iter().position(|n| *n != 0);
+        if let Some(idx) = idx {
+            s.append(&&self.0.as_bytes()[idx..]);
+        }
+    }
+}
+
+impl rlp::Decodable for StorageValue {
+    fn decode(rlp: &rlp::Rlp) -> Result<Self, rlp::DecoderError> {
+        if rlp.is_null() {
+            return Ok(StorageValue::default());
+        }
+        let data = rlp.as_raw();
+        assert!(data.len() <= 32);
+        let mut out = SH256::default();
+        out.0[32 - data.len()..].copy_from_slice(&data);
+        Ok(Self(out))
+    }
+}
+
+impl CacheValueEnc for StorageValue {
+    fn decode(buf: &[u8]) -> Result<Self, String> {
+        let result = rlp::decode(buf).map_err(debug);
+        glog::info!("buf: {:?}, result: {:?}", buf, result);
+        result
+    }
+
+    fn encode(&self) -> Vec<u8> {
+        rlp::encode(self).to_vec()
     }
 }

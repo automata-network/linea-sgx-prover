@@ -214,7 +214,10 @@ impl BlockExecutor {
             glog::info!("[{}] {:?}", idx, tx);
             let tx = Arc::new(tx);
             let receipt = builder.commit(tx.clone()).unwrap();
+            glog::info!("receipt: {:?}", receipt);
         }
+        let root_hash = builder.flush_state().map_err(debug)?;
+        glog::info!("final root hash: {:?}", root_hash);
         Ok(())
     }
 

@@ -1,12 +1,11 @@
 use core::marker::PhantomData;
 use std::prelude::v1::*;
 
-use eth_types::{HexBytes, SH256};
-use std::sync::Arc;
+use eth_types::{SH256, HexBytes};
 
 use crate::{
-    format_node_index, init_world_state, trie_hash, utils, Database, Error, FlattenedLeaf,
-    LeafOpening, LeafType, MemStore, Node, SpareMerkleTrie, ZK_TRIE_DEPTH,
+    init_world_state, trie_hash, utils, Database, Error, FlattenedLeaf, LeafOpening, LeafType,
+    MemStore, Node, SpareMerkleTrie,
 };
 
 pub type MemZkTrie = ZkTrie<MemStore>;
@@ -18,35 +17,35 @@ pub struct ZkTrie<D: Database<Node = Node>> {
 }
 
 impl<D: Database<Node = Node>> ZkTrie<D> {
-    pub fn new(db: &D, root: SH256) -> Result<Self, Error> {
-        Ok(ZkTrie {
-            state: SpareMerkleTrie::new(db, root)?,
-            _marker: PhantomData,
-        })
-    }
-
-    pub fn new_from_sub_root(next_free_node: u64, sub_root: SH256) -> Self {
+    pub fn new(root: SH256) -> Self {
         ZkTrie {
-            state: SpareMerkleTrie::new_from_sub_root(next_free_node, sub_root),
+            state: SpareMerkleTrie::new(root),
             _marker: PhantomData,
         }
     }
 
+    // pub fn new_from_sub_root(next_free_node: u64, sub_root: SH256) -> Self {
+    //     ZkTrie {
+    //         state: SpareMerkleTrie::new_from_sub_root(next_free_node, sub_root),
+    //         _marker: PhantomData,
+    //     }
+    // }
+
     pub fn empty(db: &mut D) -> Result<Self, Error> {
         let (empty_node, _) = init_world_state();
-        let mut trie = Self::new(db, *empty_node.hash())?;
+        let mut trie = Self::new(*empty_node.hash());
         trie.set_head_and_tail(db)?;
         Ok(trie)
     }
 
     fn set_head_and_tail(&mut self, db: &mut D) -> Result<(), Error> {
-        let index = self.get_next_free_leaf_node_index(&db)?;
+        let index = self.get_next_free_leaf_node(&db)?;
         let head_path = utils::get_leaf_path(index);
         self.state
             .put(db, &head_path, LeafOpening::head().to_bytes())?;
         db.update_index(LeafOpening::head().hkey, FlattenedLeaf::head().clone());
         self.increment_next_free_leaf_node_index(db)?;
-        let tail_index = self.next_free_node().ok_or(Error::InMemNextNodeNotFound)?;
+        let tail_index = self.next_free_node(db)?;
         db.update_index(LeafOpening::tail().hkey, FlattenedLeaf::tail().clone());
         let tail_path = utils::get_leaf_path(tail_index);
         self.state
@@ -59,12 +58,12 @@ impl<D: Database<Node = Node>> ZkTrie<D> {
         self.state.root_hash()
     }
 
-    pub fn sub_root_hash(&self) -> &SH256 {
-        self.state.sub_root_hash()
+    pub fn sub_root_hash(&self, db: &D) -> Result<SH256, Error> {
+        self.state.sub_root_hash(db)
     }
 
-    pub fn next_free_node(&self) -> Option<u64> {
-        self.state.next_free_node()
+    pub fn next_free_node(&self, db: &D) -> Result<u64, Error> {
+        self.state.next_free_node(db)
     }
 
     fn get_next_free_node_path(&self) -> [u8; 2] {
@@ -72,28 +71,15 @@ impl<D: Database<Node = Node>> ZkTrie<D> {
         [NEXT_FREE_NODE_PATH, LeafType::NextFreeNode as u8]
     }
 
-    pub fn increment_next_free_leaf_node_index(&mut self, db: &mut D) -> Result<(), Error> {
-        let found_free_node = match self.state.next_free_node() {
-            Some(node) => node,
-            None => self.get_next_free_leaf_node_index(db)?,
-        };
+    pub fn increment_next_free_leaf_node_index(&mut self, db: &mut D) -> Result<u64, Error> {
+        let found_free_node = self.state.next_free_node(db)?;
         let next_free_node = found_free_node + 1;
-        self.state.set_next_free_node(next_free_node)?;
-        Ok(())
+        self.state.set_next_free_node(db, next_free_node)?;
+        Ok(next_free_node)
     }
 
-    fn get_next_free_leaf_node_index(&self, db: &D) -> Result<u64, Error> {
-        // todo: cache?
-        let path = &self.get_next_free_node_path();
-        let node = self.state.get_node(db, path)?;
-        let index = node
-            .map(|node| {
-                node.value()
-                    .map(utils::parse_node_index)
-                    .unwrap_or_default()
-            })
-            .unwrap_or_default();
-        Ok(index)
+    fn get_next_free_leaf_node(&self, db: &D) -> Result<u64, Error> {
+        self.state.next_free_node(db)
     }
 
     fn parse_node<N, F: FnOnce(&[u8]) -> N>(&self, db: &D, key: &[u8], f: F) -> Result<N, Error> {
@@ -158,6 +144,7 @@ impl<D: Database<Node = Node>> ZkTrie<D> {
     pub fn read(&self, db: &D, key: &[u8]) -> Result<Option<Vec<u8>>, Error> {
         let hkey = trie_hash(key)?;
         let nearest_keys = db.get_nearest_keys(self.top_root_hash(), &hkey);
+        glog::info!("{:?} read key: {:?}", self.state.root_hash(), nearest_keys);
         Ok(match nearest_keys.center {
             Some(leaf) => Some(leaf.leaf_value.into()),
             None => None,
@@ -167,14 +154,16 @@ impl<D: Database<Node = Node>> ZkTrie<D> {
     pub fn put(&mut self, db: &mut D, key: &[u8], value: Vec<u8>) -> Result<(), Error> {
         let hkey = trie_hash(key)?;
         let nearest_keys = db.get_nearest_keys(self.top_root_hash(), &hkey);
+
+
+        let sub_root_hash = self.sub_root_hash(db)?;
+        glog::info!("sub root hash: {:?}", sub_root_hash);
+        glog::info!("put key: {:?}, index: {:?}", HexBytes::from(key), nearest_keys);
         match nearest_keys.center {
             None => {
                 let left_leaf_path = nearest_keys.left_path();
                 let right_leaf_path = nearest_keys.right_path();
-                let next_free_node = self
-                    .state
-                    .next_free_node()
-                    .ok_or(Error::InMemNextNodeNotFound)?;
+                let next_free_node = self.state.next_free_node(db)?;
 
                 // UPDATE HKey- with hash(k) for next
                 {
@@ -229,6 +218,9 @@ impl<D: Database<Node = Node>> ZkTrie<D> {
                     .put(db, &leaf_path_to_update, new_updated_leaf.to_bytes())?;
             }
         }
+
+        let sub_root_hash = self.sub_root_hash(db)?;
+        glog::info!("sub root hash: {:?}", sub_root_hash);
         Ok(())
     }
 }
@@ -238,11 +230,9 @@ mod test {
     use std::time::Instant;
 
     use base::format::debug;
+    use eth_types::HexBytes;
 
-    use crate::{
-        init_world_state, trie_hash, utils, LeafOpening, MemStore, Node, NodeValue, Trace,
-        ZK_TRIE_DEPTH,
-    };
+    use crate::{init_world_state, trie_hash, utils, LeafOpening, MemStore, NodeValue, Trace};
 
     use super::*;
 
@@ -273,6 +263,7 @@ mod test {
 
     #[test]
     fn test_zktrie_empty_roothash() {
+        glog::init_test();
         let mut db = MemStore::new();
         let mut empty_trie = MemZkTrie::empty(&mut db).unwrap();
         assert_eq!(
@@ -280,8 +271,8 @@ mod test {
             &"0x07977874126658098c066972282d4c85f230520af3847e297fe7524f976873e5".into()
         );
         assert_eq!(
-            empty_trie.sub_root_hash(),
-            &"0x0951bfcd4ac808d195af8247140b906a4379b3f2d37ec66e34d2f4a5d35fa166".into()
+            empty_trie.sub_root_hash(&db).unwrap(),
+            "0x0951bfcd4ac808d195af8247140b906a4379b3f2d37ec66e34d2f4a5d35fa166".into()
         );
     }
 
@@ -295,8 +286,8 @@ mod test {
 
         trie.put(&mut db, &key, value).unwrap();
         assert_eq!(
-            trie.sub_root_hash(),
-            &"0x0882afe875656680dceb7b17fcba7c136cec0c32becbe9039546c79f71c56d36".into()
+            trie.sub_root_hash(&db).unwrap(),
+            "0x0882afe875656680dceb7b17fcba7c136cec0c32becbe9039546c79f71c56d36".into()
         );
         assert_eq!(
             trie.top_root_hash(),
@@ -315,8 +306,8 @@ mod test {
 
         trie.put(&mut db, &key, dum_value).unwrap();
         assert_eq!(
-            trie.sub_root_hash(),
-            &"0x02703cefa95c6dd143543c5e73b14e51a3b714dc73816c6830e4267a41792b1a".into()
+            trie.sub_root_hash(&db).unwrap(),
+            "0x02703cefa95c6dd143543c5e73b14e51a3b714dc73816c6830e4267a41792b1a".into()
         );
         assert_eq!(
             trie.top_root_hash(),
@@ -326,8 +317,8 @@ mod test {
         trie.put(&mut db, &key, new_dum_value).unwrap();
 
         assert_eq!(
-            trie.sub_root_hash(),
-            &"0x0882afe875656680dceb7b17fcba7c136cec0c32becbe9039546c79f71c56d36".into()
+            trie.sub_root_hash(&db).unwrap(),
+            "0x0882afe875656680dceb7b17fcba7c136cec0c32becbe9039546c79f71c56d36".into()
         );
         assert_eq!(
             trie.top_root_hash(),
@@ -344,8 +335,8 @@ mod test {
         trie.put(&mut db, &key, value).unwrap();
 
         assert_eq!(
-            trie.sub_root_hash(),
-            &"0x02703cefa95c6dd143543c5e73b14e51a3b714dc73816c6830e4267a41792b1a".into()
+            trie.sub_root_hash(&db).unwrap(),
+            "0x02703cefa95c6dd143543c5e73b14e51a3b714dc73816c6830e4267a41792b1a".into()
         );
         assert_eq!(
             trie.top_root_hash(),
@@ -354,8 +345,8 @@ mod test {
 
         trie.remove(&mut db, &key).unwrap();
         assert_eq!(
-            trie.sub_root_hash(),
-            &"0x0951bfcd4ac808d195af8247140b906a4379b3f2d37ec66e34d2f4a5d35fa166".into()
+            trie.sub_root_hash(&db).unwrap(),
+            "0x0951bfcd4ac808d195af8247140b906a4379b3f2d37ec66e34d2f4a5d35fa166".into()
         );
         assert_eq!(
             trie.top_root_hash(),
@@ -380,13 +371,15 @@ mod test {
     #[test]
     pub fn test_from_proof() {
         glog::init_test();
-        let prev_state_root: SH256 =
-            "0x108e0450f48e7b3a9420bc085a9da6704e1da76ac4898eef9db5afe4ff48b2ab".into();
-        let next_free_node = 66;
 
         let traces = get_traces("from_proof").unwrap();
         let mut db = MemStore::from_traces(&traces).unwrap();
-        let mut trie = MemZkTrie::new_from_sub_root(next_free_node, prev_state_root);
+        let root = Node::top_node(
+            66,
+            "0x108e0450f48e7b3a9420bc085a9da6704e1da76ac4898eef9db5afe4ff48b2ab".into(),
+        );
+        let root = db.update_node(*root.hash(), root).unwrap();
+        let mut trie = MemZkTrie::new(*root.hash());
 
         assert_eq!(
             trie.top_root_hash(),
@@ -448,11 +441,13 @@ mod test {
     fn performance() {
         let traces = get_traces("performance").unwrap();
         println!("{}", traces.len());
-        let mut db = MemStore::from_traces(traces.clone()).unwrap();
-        let next_free_node = 642;
-        let prev_state_root =
-            "0x09bb97d5c671eb0224bab1a44d8d60b35f5226253db52faddde77dcb228fd455".into();
-        let mut trie = MemZkTrie::new_from_sub_root(next_free_node, prev_state_root);
+        let mut db = MemStore::from_traces(&traces).unwrap();
+        let root = Node::top_node(
+            642,
+            "0x09bb97d5c671eb0224bab1a44d8d60b35f5226253db52faddde77dcb228fd455".into(),
+        );
+        let root = db.update_node(*root.hash(), root).unwrap();
+        let mut trie = MemZkTrie::new(*root.hash());
         println!("{:?}", trie.top_root_hash());
 
         let now = Instant::now();

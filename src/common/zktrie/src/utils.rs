@@ -23,6 +23,9 @@ pub fn format_node_index(node_index: u64) -> SH256 {
 }
 
 pub fn parse_node_index(n: &[u8]) -> u64 {
+    if n.len() == 0 {
+        return 0;
+    }
     let mut tmp = [0_u8; 8];
     tmp.copy_from_slice(&n[n.len() - 8..]);
     u64::from_be_bytes(tmp)
