@@ -1,5 +1,7 @@
 # linea-sgx-prover
 
+*NOTE:* This repo is migrated to [sgx-prover](https://github.com/automata-network/sgx-prover)
+
 ## RoadMap
 
 - [x] Generate Proof of Block (Pob) in SGX prover
@@ -8,7 +10,7 @@
 - [x] SGX prover registry & key rotation
 - [x] SGX prover submits rollup proofs
 - [x] Implement the Rust version of Linea zktrie that aligns with the new spec [shomei](https://github.com/Consensys/shomei)
-- [ ] Integrate with the new zktrie to the SGX prover and generate the root_hash (working in progress)
+- [x] Integrate with the new zktrie to the SGX prover and generate the root_hash
 - [ ] Submit the root_hash of zktrie to the SGX Verifier
 
 
